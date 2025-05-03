@@ -149,9 +149,10 @@ export async function reviewArchitecturalPlan(
   let planReviewText: string;
 
   const msg1 = first.choices[0].message;
-  if (msg1.function_call) {
+  const toolCall = msg1.tool_calls?.[0];
+  if (toolCall) {
     // 2️⃣ Execute the search
-    const { name, arguments: argStr } = msg1.function_call;
+    const { name, arguments: argStr } = toolCall.function;
     const args = JSON.parse(argStr);
     const results = await performWebSearch(args.query, args.maxResults || 5);
 
@@ -160,13 +161,13 @@ export async function reviewArchitecturalPlan(
       model: "o4-mini",
       messages: [
         ...baseMessages,
-        msg1, // the function_call message from the API response
+        msg1, // the tool_call message from the API response
         {
-          role: "function", // Ensure role is correctly typed
+          role: "tool", // Updated role for tool call
           name,
           content: JSON.stringify(results),
         },
-      ] as ChatCompletionMessageParam[], // Cast to the required type
+      ] as ChatCompletionMessageParam[],
       max_completion_tokens: 4000,
     });
     planReviewText = second.choices[0].message.content || "";
