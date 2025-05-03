@@ -34,6 +34,7 @@ Both cityPlannerEmailBody and submitterEmailBody must use the following HTML/CSS
 - A blue box with rounded corners containing:
   - A bold 'Finding Counts' subheader
   - A bulleted list of counts for critical, major, minor, and total findings
+- A full, detailed list of all findings, sorted by severity (critical, major, minor) and logically grouped together. Each finding should include its description, code section, severity, confidence score, and remedial action. This detailed list must be present in both emails.
 - (For submitter only) A section for 'Next Steps' with a numbered list
 - A gray footer paragraph in small text
 
