@@ -8,7 +8,7 @@ export default function Home() {
   return (
     <main className="min-h-screen flex flex-col">
       <Navbar />
-      <div className="flex-grow">
+      <div className="flex-grow mx-auto max-w-screen-xl">
         <Hero />
         <SubmissionForm />
         <HowItWorks />
