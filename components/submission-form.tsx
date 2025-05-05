@@ -91,7 +91,8 @@ export function SubmissionForm() {
         cityPlannerEmail: data.cityPlannerEmail
       });
 
-      const response = await fetch('/api/submit-plan', {
+      const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || '';
+      const response = await fetch(`${apiBaseUrl}/api/submit-plan`, {
         method: 'POST',
         body: formData,
       });

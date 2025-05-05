@@ -6,9 +6,55 @@ import { Toaster } from "@/components/ui/toaster";
 
 const inter = Inter({ subsets: ['latin'] });
 
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+
 export const metadata: Metadata = {
   title: 'CivicStream - Architectural Plan Review',
   description: 'Automated compliance review for architectural plans',
+  keywords: ['architectural plans', 'compliance review', 'building codes', 'construction', 'architecture'],
+  authors: [{ name: 'CivicStream' }],
+  creator: 'CivicStream',
+  publisher: 'CivicStream',
+  formatDetection: {
+    email: false,
+    address: false,
+    telephone: false,
+  },
+  metadataBase: new URL(BASE_URL),
+  openGraph: {
+    type: 'website',
+    locale: 'en_US',
+    url: BASE_URL,
+    title: 'CivicStream - Architectural Plan Review',
+    description: 'Automated compliance review for architectural plans',
+    siteName: 'CivicStream',
+    images: [
+      {
+        url: `${BASE_URL}/opengraph-image.png`,
+        width: 1200,
+        height: 630,
+        alt: 'CivicStream - Architectural Plan Review',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'CivicStream - Architectural Plan Review',
+    description: 'Automated compliance review for architectural plans',
+    images: [`${BASE_URL}/opengraph-image.png`],
+    creator: '@civicstream',
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-video-preview': -1,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+    },
+  }
 };
 
 export default function RootLayout({
