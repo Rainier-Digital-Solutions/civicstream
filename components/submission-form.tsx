@@ -18,6 +18,11 @@ import { Loader2, File, Upload, CheckCircle, XCircle, AlertCircle } from 'lucide
 const formSchema = z.object({
   submitterEmail: z.string().email('Please enter a valid email address'),
   cityPlannerEmail: z.string().email('Please enter a valid email address'),
+  address: z.string().min(1, 'Address is required'),
+  parcelNumber: z.string().min(1, 'Parcel number is required'),
+  city: z.string().min(1, 'City is required'),
+  county: z.string().min(1, 'County is required'),
+  projectSummary: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -33,6 +38,11 @@ export function SubmissionForm() {
     defaultValues: {
       submitterEmail: '',
       cityPlannerEmail: '',
+      address: '',
+      parcelNumber: '',
+      city: '',
+      county: '',
+      projectSummary: '',
     },
   });
 
@@ -83,12 +93,24 @@ export function SubmissionForm() {
       formData.append('file', file);
       formData.append('submitterEmail', data.submitterEmail);
       formData.append('cityPlannerEmail', data.cityPlannerEmail);
+      formData.append('address', data.address);
+      formData.append('parcelNumber', data.parcelNumber);
+      formData.append('city', data.city);
+      formData.append('county', data.county);
+      if (data.projectSummary) {
+        formData.append('projectSummary', data.projectSummary);
+      }
 
       console.log('Submitting plan for review:', {
         fileName: file.name,
         fileSize: file.size,
         submitterEmail: data.submitterEmail,
-        cityPlannerEmail: data.cityPlannerEmail
+        cityPlannerEmail: data.cityPlannerEmail,
+        address: data.address,
+        parcelNumber: data.parcelNumber,
+        city: data.city,
+        county: data.county,
+        hasProjectSummary: !!data.projectSummary
       });
 
       const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || '';
@@ -165,7 +187,7 @@ export function SubmissionForm() {
           <CardHeader>
             <CardTitle>Plan Submission</CardTitle>
             <CardDescription>
-              Upload your architectural plan PDF and provide the necessary contact information.
+              Upload your architectural plan PDF and provide the necessary project details.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -259,6 +281,81 @@ export function SubmissionForm() {
                     )}
                   />
                 </div>
+
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="address"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Project Address</FormLabel>
+                        <FormControl>
+                          <Input placeholder="1234 Main St" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="parcelNumber"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Parcel Number</FormLabel>
+                        <FormControl>
+                          <Input placeholder="123456789" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="city"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>City</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Seattle" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="county"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>County</FormLabel>
+                        <FormControl>
+                          <Input placeholder="King County" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="projectSummary"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Project Summary (Optional)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Brief description of the project" {...field} />
+                      </FormControl>
+                      <FormDescription>
+                        Provide a brief overview of your project (optional)
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
                 <div className="flex items-center justify-end">
                   <Button

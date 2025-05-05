@@ -5,16 +5,41 @@ import { routeReviewResults } from '@/lib/email';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
+  console.log('[API] Received plan submission request');
+
   try {
     console.log('Received plan submission request');
 
     const formData = await req.formData();
+    console.log('[API] FormData received:', {
+      hasFile: formData.has('file'),
+      hasSubmitterEmail: formData.has('submitterEmail'),
+      hasCityPlannerEmail: formData.has('cityPlannerEmail'),
+      hasAddress: formData.has('address'),
+      hasParcelNumber: formData.has('parcelNumber'),
+      hasCity: formData.has('city'),
+      hasCounty: formData.has('county')
+    });
+
     const file = formData.get('file') as File | null;
     const submitterEmail = formData.get('submitterEmail') as string;
     const cityPlannerEmail = formData.get('cityPlannerEmail') as string;
+    const address = formData.get('address') as string;
+    const parcelNumber = formData.get('parcelNumber') as string;
+    const city = formData.get('city') as string;
+    const county = formData.get('county') as string;
+    const projectSummary = formData.get('projectSummary') as string | null;
 
-    if (!file || !submitterEmail || !cityPlannerEmail) {
-      console.error('Missing required fields:', { file: !!file, submitterEmail, cityPlannerEmail });
+    if (!file || !submitterEmail || !cityPlannerEmail || !address || !parcelNumber || !city || !county) {
+      console.error('Missing required fields:', {
+        file: !!file,
+        submitterEmail,
+        cityPlannerEmail,
+        address,
+        parcelNumber,
+        city,
+        county
+      });
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
@@ -25,7 +50,12 @@ export async function POST(req: NextRequest) {
       fileName: file.name,
       fileSize: file.size,
       submitterEmail,
-      cityPlannerEmail
+      cityPlannerEmail,
+      address,
+      parcelNumber,
+      city,
+      county,
+      hasProjectSummary: !!projectSummary
     });
 
     // Convert file to buffer
@@ -36,8 +66,14 @@ export async function POST(req: NextRequest) {
 
     console.log('Sending to OpenAI for review');
 
-    // Send to OpenAI for review
-    const reviewResult = await reviewArchitecturalPlan(base64Pdf);
+    // Send to OpenAI for review with project details
+    const reviewResult = await reviewArchitecturalPlan(base64Pdf, {
+      address,
+      parcelNumber,
+      city,
+      county,
+      projectSummary: projectSummary || undefined
+    });
 
     console.log('Review completed:', {
       isCompliant: reviewResult.isCompliant,

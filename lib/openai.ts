@@ -1,16 +1,25 @@
 import { OpenAI } from "openai";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { ChatCompletionTool } from "openai/resources/chat/completions";
 
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+interface SearchResult {
+  title: string;
+  snippet: string;
+  url: string;
+}
+
 // The compliance review prompt
 const COMPLIANCE_REVIEW_PROMPT = `
-You are a city plan reviewer for municipalities, focusing on the Greater Seattle Area. Your task is to review architectural plans and provide a structured JSON response.
+You are a city plan reviewer for municipalities in the Greater Seattle area. Your task is to review architectural plans and provide a structured JSON response.
 
 IMPORTANT: You MUST respond with ONLY a valid JSON object. Do not include any explanatory text before or after the JSON. The response must be parseable by JSON.parse().
+
+BEFORE analyzing the plans, you MUST use the web_search function to retrieve the latest building codes and regulations. This is REQUIRED for every review.
 
 Your response will be used to automatically generate emails, so it must follow this exact format:
 
@@ -48,9 +57,9 @@ Use this structure and style for both emails, only changing the header color/tex
 
 To perform the review:
 
-1. Use web search capabilities to access and verify the most current international building code, municipal zoning code, and state and local zoning and planning codes as of the submission date.
+1. Extract the address and parcel number from uploaded PDF architectural plans to identify the specific municipality and applicable codes, cross-checking the address with the parcel number to ensure accuracy. These are required for every set of plans and must be included in the web search query. They are typically found in the top right corner of the plans. The plans will include either the city name, county name, parcel number, or a combination of these. The web search query should include the city name, county name, or both.
 
-2. Extract the address and parcel number from uploaded PDF architectural plans to identify the specific municipality and applicable codes, cross-checking the address with the parcel number to ensure accuracy.
+2. Use web search capabilities to access and verify the most current international building code, municipal zoning code, and state and local zoning and planning codes as of the submission date based on the identified municipality.
 
 3. Analyze the plans, which include a scale, compass, legend, and a general information table, along with accompanying documents (e.g., full plan sets, required inspection certificates, surveys, stormwater management plans, traffic studies).
 
@@ -76,7 +85,7 @@ To perform the review:
      3. Resubmit your corrected plans through our system
    - Use a supportive, professional tone
 
-REMEMBER: Your response must be ONLY a valid JSON object. Do not include any other text.
+REMEMBER: Your response must be ONLY a valid JSON object. Only include the JSON object. If you encounter an error, return an empty array for each finding type as a valid JSON object. You must always return the expected JSON object.
 `;
 
 export interface ReviewFinding {
@@ -98,113 +107,263 @@ export interface ReviewResult {
   submitterEmailBody: string;
 }
 
-// Stub: replace with your real search‐API integration
-// TODO: Implement actual web search functionality
-async function performWebSearch(query: string, maxResults: number) {
-  // e.g. call Bing / Google CSE, return [{ title, snippet, url }, …]
-  return [];
+async function performWebSearch(query: string, maxResults: number): Promise<SearchResult[]> {
+  if (!process.env.SERPAPI_API_KEY) {
+    console.error('[OpenAI] SerpAPI key not found in environment variables');
+    return [];
+  }
+
+  try {
+    const url = `https://serpapi.com/search.json?engine=google&q=${encodeURIComponent(query)}&api_key=${process.env.SERPAPI_API_KEY}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`SerpAPI request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // Extract organic results from SerpAPI response
+    const results = data.organic_results?.slice(0, maxResults).map((item: any) => ({
+      title: item.title,
+      snippet: item.snippet,
+      url: item.link,
+    })) ?? [];
+
+    console.log(`[OpenAI] SerpAPI search returned ${results.length} results for query: ${query}`);
+    return results;
+  } catch (error) {
+    console.error('[OpenAI] Error performing web search:', error);
+    return [];
+  }
 }
 
 export async function reviewArchitecturalPlan(
-  pdfBase64: string
+  pdfBase64: string,
+  projectDetails: {
+    address: string;
+    parcelNumber: string;
+    city: string;
+    county: string;
+    projectSummary?: string;
+  },
+  maxRetries: number = 3
 ): Promise<ReviewResult> {
-  // Build the initial conversation
-  const baseMessages: ChatCompletionMessageParam[] = [
-    { role: "system", content: COMPLIANCE_REVIEW_PROMPT },
-    {
-      role: "user",
-      content: `[PDF Content Attached - Base64 Length: ${pdfBase64.length}]`,
-    },
-  ];
+  console.log('[OpenAI] Starting architectural plan review');
 
-  // Let GPT call our web_search function if it needs live code lookups
-  const functions = [
-    {
-      name: "web_search",
-      description:
-        "Lookup the latest building code, zoning code, or state/local regulations",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Search terms" },
-          maxResults: {
-            type: "integer",
-            description: "Number of top results to return",
-          },
-        },
-        required: ["query"],
-      },
-    },
-  ];
+  let attempts = 0;
+  let lastError: Error | null = null;
 
-  // 1️⃣ First pass: GPT may request web_search(...)
-  const first = await openai.chat.completions.create({
-    model: "o4-mini",
-    messages: baseMessages,
-    functions,
-    function_call: "auto",
-    max_completion_tokens: 4000,
-  });
-
-  let planReviewText: string;
-
-  const msg1 = first.choices[0].message;
-  const toolCall = msg1.tool_calls?.[0];
-  if (toolCall) {
-    // 2️⃣ Execute the search
-    const { name, arguments: argStr } = toolCall.function;
-    const args = JSON.parse(argStr);
-    const results = await performWebSearch(args.query, args.maxResults || 5);
-
-    // 3️⃣ Feed results back
-    const second = await openai.chat.completions.create({
-      model: "o4-mini",
-      messages: [
-        ...baseMessages,
-        msg1, // the tool_call message from the API response
+  while (attempts < maxRetries) {
+    try {
+      // Build the initial conversation with structured project details
+      const baseMessages: ChatCompletionMessageParam[] = [
+        { role: "system", content: COMPLIANCE_REVIEW_PROMPT },
         {
-          role: "tool", // Updated role for tool call
-          name,
-          content: JSON.stringify(results),
+          role: "user",
+          content: `
+Project Details:
+Address: ${projectDetails.address}
+Parcel Number: ${projectDetails.parcelNumber}
+City: ${projectDetails.city}
+County: ${projectDetails.county}
+${projectDetails.projectSummary ? `Project Summary: ${projectDetails.projectSummary}` : ''}
+
+[PDF Content Attached - Base64 Length: ${pdfBase64.length}]
+
+Please analyze these plans and use the web_search tool to find applicable building codes and regulations for this location.`,
         },
-      ] as ChatCompletionMessageParam[],
-      max_completion_tokens: 4000,
-    });
-    planReviewText = second.choices[0].message.content || "";
-  } else {
-    // no search needed
-    planReviewText = msg1.content || "";
-  }
+      ];
 
-  // Log the raw response for debugging
-  console.log('Raw OpenAI response:', planReviewText);
+      const tools: ChatCompletionTool[] = [
+        {
+          type: "function",
+          function: {
+            name: "web_search",
+            description: "Search the web for current building codes and regulations based on identified municipality. Priority should be given to the identified city first, then county, then the state, then international building codes.",
+            parameters: {
+              type: "object",
+              properties: {
+                search_query: {
+                  type: "string",
+                  description: "The search query to look up building codes and regulations"
+                }
+              },
+              required: ["search_query"]
+            }
+          }
+        }
+      ];
 
-  try {
-    // Parse the JSON response
-    const result = JSON.parse(planReviewText);
+      console.log(`[OpenAI] Attempt ${attempts + 1}/${maxRetries}: Sending request to OpenAI`);
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: baseMessages,
+        tools,
+        tool_choice: "auto", // Changed from specific function to auto to ensure proper tool usage
+        max_tokens: 4000,
+      });
 
-    // Validate the response structure
-    if (!result.summary || !Array.isArray(result.criticalFindings) ||
-      !Array.isArray(result.majorFindings) || !Array.isArray(result.minorFindings) ||
-      typeof result.totalFindings !== 'number' || typeof result.isCompliant !== 'boolean' ||
-      !result.cityPlannerEmailBody || !result.submitterEmailBody) {
-      console.error('Invalid response structure:', result);
-      throw new Error('Invalid response structure from AI');
+      console.log('[OpenAI] Received response from OpenAI');
+      const message = response.choices[0].message;
+
+      if (!message.tool_calls?.[0]) {
+        console.warn('[OpenAI] No web search tool call received in first response');
+        throw new Error('No web search tool call received');
+      }
+
+      const toolCall = message.tool_calls[0];
+      const args = JSON.parse(toolCall.function.arguments);
+      console.log('[OpenAI] Web search query:', args.search_query);
+
+      const searchResults = await performWebSearch(args.search_query, 5);
+
+      if (searchResults.length === 0) {
+        console.warn('[OpenAI] No search results returned for query:', args.search_query);
+      }
+
+      const secondResponse = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          ...baseMessages,
+          message,
+          {
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({
+              search_results: searchResults,
+              instruction: "Use these search results to determine applicable code sections and identify any violations in the plans. Ensure all findings reference specific code sections from the search results."
+            })
+          },
+          {
+            role: "user",
+            content: "Please analyze the architectural plans using the building codes and regulations found in the search results. Compare the plans against these codes to identify any compliance issues. Provide a detailed review following the required JSON format."
+          }
+        ],
+        max_tokens: 4000,
+      });
+
+      const planReviewText = secondResponse.choices[0].message.content || "";
+      console.log('[OpenAI] Raw response length:', planReviewText.length);
+
+      try {
+        const result = JSON.parse(planReviewText);
+        console.log('[OpenAI] Successfully parsed JSON response');
+
+        // Enhanced validation of the response structure
+        if (!result.summary || !Array.isArray(result.criticalFindings) ||
+          !Array.isArray(result.majorFindings) || !Array.isArray(result.minorFindings) ||
+          typeof result.totalFindings !== 'number' || typeof result.isCompliant !== 'boolean' ||
+          !result.cityPlannerEmailBody || !result.submitterEmailBody) {
+          throw new Error('Invalid response structure from AI');
+        }
+
+        // Validate findings consistency
+        if (!result.isCompliant && result.totalFindings === 0) {
+          console.warn('[OpenAI] Inconsistent response: isCompliant=false but totalFindings=0');
+        }
+
+        // Validate that findings reference code sections
+        const allFindings = [...result.criticalFindings, ...result.majorFindings, ...result.minorFindings];
+        const findingsWithoutCodeSections = allFindings.filter(f => !f.codeSection);
+        if (findingsWithoutCodeSections.length > 0) {
+          console.warn('[OpenAI] Found findings without code section references:', findingsWithoutCodeSections.length);
+        }
+
+        return {
+          summary: result.summary,
+          criticalFindings: result.criticalFindings,
+          majorFindings: result.majorFindings,
+          minorFindings: result.minorFindings,
+          totalFindings: result.totalFindings,
+          isCompliant: result.isCompliant,
+          cityPlannerEmailBody: result.cityPlannerEmailBody,
+          submitterEmailBody: result.submitterEmailBody
+        };
+      } catch (parseError) {
+        console.error(`[OpenAI] Attempt ${attempts + 1} failed to parse JSON:`, parseError);
+        console.error('[OpenAI] Raw response that failed to parse:', planReviewText);
+        lastError = parseError instanceof Error ? parseError : new Error('Failed to parse AI response as JSON');
+
+        // If this was the last attempt, return a default response
+        if (attempts === maxRetries - 1) {
+          console.log('[OpenAI] All retry attempts failed, returning default response');
+          return {
+            summary: "Unable to process the plan due to technical difficulties. Please try again.",
+            criticalFindings: [],
+            majorFindings: [],
+            minorFindings: [],
+            totalFindings: 0,
+            isCompliant: false,
+            cityPlannerEmailBody: `<div style="color: red; font-size: 24px; font-weight: bold;">Technical Error</div>
+              <hr>
+              <p>We encountered a technical error while processing your plan. Please try submitting again.</p>
+              <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
+                <h3 style="color: #0066cc;">Review Summary</h3>
+                <p>Unable to process the plan due to technical difficulties.</p>
+              </div>
+              <div style="font-size: 12px; color: #666; margin-top: 20px;">
+                This email was automatically generated by CivicStream. The plan could not be processed due to technical difficulties.
+              </div>`,
+            submitterEmailBody: `<div style="color: red; font-size: 24px; font-weight: bold;">Technical Error</div>
+              <hr>
+              <p>We encountered a technical error while processing your plan. Please try submitting again.</p>
+              <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
+                <h3 style="color: #0066cc;">Review Summary</h3>
+                <p>Unable to process the plan due to technical difficulties.</p>
+              </div>
+              <div style="font-size: 12px; color: #666; margin-top: 20px;">
+                This email was automatically generated by CivicStream. The plan could not be processed due to technical difficulties.
+              </div>`
+          };
+        }
+      }
+    } catch (error) {
+      console.error(`[OpenAI] Attempt ${attempts + 1} failed with error:`, error);
+      lastError = error instanceof Error ? error : new Error('Unknown error occurred');
+
+      // If this was the last attempt, return a default response
+      if (attempts === maxRetries - 1) {
+        console.log('[OpenAI] All retry attempts failed, returning default response');
+        return {
+          summary: "Unable to process the plan due to technical difficulties. Please try again.",
+          criticalFindings: [],
+          majorFindings: [],
+          minorFindings: [],
+          totalFindings: 0,
+          isCompliant: false,
+          cityPlannerEmailBody: `<div style="color: red; font-size: 24px; font-weight: bold;">Technical Error</div>
+            <hr>
+            <p>We encountered a technical error while processing your plan. Please try submitting again.</p>
+            <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
+              <h3 style="color: #0066cc;">Review Summary</h3>
+              <p>Unable to process the plan due to technical difficulties.</p>
+            </div>
+            <div style="font-size: 12px; color: #666; margin-top: 20px;">
+              This email was automatically generated by CivicStream. The plan could not be processed due to technical difficulties.
+            </div>`,
+          submitterEmailBody: `<div style="color: red; font-size: 24px; font-weight: bold;">Technical Error</div>
+            <hr>
+            <p>We encountered a technical error while processing your plan. Please try submitting again.</p>
+            <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
+              <h3 style="color: #0066cc;">Review Summary</h3>
+              <p>Unable to process the plan due to technical difficulties.</p>
+            </div>
+            <div style="font-size: 12px; color: #666; margin-top: 20px;">
+              This email was automatically generated by CivicStream. The plan could not be processed due to technical difficulties.
+            </div>`
+        };
+      }
     }
 
-    return {
-      summary: result.summary,
-      criticalFindings: result.criticalFindings,
-      majorFindings: result.majorFindings,
-      minorFindings: result.minorFindings,
-      totalFindings: result.totalFindings,
-      isCompliant: result.isCompliant,
-      cityPlannerEmailBody: result.cityPlannerEmailBody,
-      submitterEmailBody: result.submitterEmailBody
-    };
-  } catch (error) {
-    console.error('Error parsing AI response:', error);
-    console.error('Raw response that failed to parse:', planReviewText);
-    throw new Error('Failed to parse AI response as JSON');
+    attempts++;
+    // Add a small delay between retries
+    if (attempts < maxRetries) {
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+    }
   }
+
+  // This should never be reached due to the default response in the catch blocks,
+  // but TypeScript needs it for type safety
+  throw lastError || new Error('Failed to process plan after all retry attempts');
 }
