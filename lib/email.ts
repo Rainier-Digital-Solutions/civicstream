@@ -15,6 +15,9 @@ const transporter = nodemailer.createTransport({
 
 export interface EmailDetails {
   to: string;
+  from: string;
+  cc?: string;
+  replyTo?: string;
   subject: string;
   html: string;
   attachments?: Array<{
@@ -58,6 +61,7 @@ export async function routeReviewResults(
       // Send to city planner if compliant
       const plannerEmailDetails: EmailDetails = {
         to: cityPlannerEmail,
+        from: process.env.EMAIL_FROM || 'noreply@civicstream.com',
         subject: 'Compliant Architectural Plan for Review',
         html: reviewResult.cityPlannerEmailBody,
         attachments: [attachment],
@@ -67,6 +71,7 @@ export async function routeReviewResults(
       // Send back to submitter if non-compliant
       const submitterEmailDetails: EmailDetails = {
         to: submitterEmail,
+        from: process.env.EMAIL_FROM || 'noreply@civicstream.com',
         subject: 'Architectural Plan Review Results - Action Required',
         html: reviewResult.submitterEmailBody,
         attachments: [attachment],
