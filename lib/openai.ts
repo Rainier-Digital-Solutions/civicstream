@@ -201,7 +201,7 @@ Please analyze these plans and use the web_search tool to find applicable buildi
         messages: baseMessages,
         tools,
         tool_choice: "auto", // Changed from specific function to auto to ensure proper tool usage
-        max_tokens: 80000,
+        // max_tokens: 8000,
       });
 
       console.log('[OpenAI] Received response from OpenAI');
@@ -240,7 +240,7 @@ Please analyze these plans and use the web_search tool to find applicable buildi
             content: "Please analyze the architectural plans using the building codes and regulations found in the search results. Compare the plans against these codes to identify any compliance issues. Provide a detailed review following the required JSON format."
           }
         ],
-        max_tokens: 80000,
+        // max_tokens: 8000,
       });
 
       const planReviewText = secondResponse.choices[0].message.content || "";
