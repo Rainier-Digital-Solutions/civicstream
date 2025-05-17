@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { reviewArchitecturalPlan } from '@/lib/openai';
 import { routeReviewResults } from '@/lib/email';
+import { chunkPDF } from '@/lib/pdf-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,28 +62,64 @@ export async function POST(req: NextRequest) {
     // Convert file to buffer
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    // Convert buffer to base64 for OpenAI API
-    const base64Pdf = buffer.toString('base64');
+    // Chunk the PDF
+    console.log('Chunking PDF...');
+    const chunks = await chunkPDF(buffer);
+    console.log(`PDF chunked into ${chunks.length} parts`);
 
-    console.log('Sending to OpenAI for review');
+    // Process each chunk and combine results
+    let combinedReviewResult = null;
+    for (const chunk of chunks) {
+      console.log(`Processing chunk for pages ${chunk.pages.join(', ')}...`);
 
-    // Send to OpenAI for review with project details
-    const reviewResult = await reviewArchitecturalPlan(base64Pdf, {
-      address,
-      parcelNumber,
-      city,
-      county,
-      projectSummary: projectSummary || undefined
-    });
+      // Send chunk to OpenAI for review
+      const chunkReviewResult = await reviewArchitecturalPlan(chunk.base64, {
+        address,
+        parcelNumber,
+        city,
+        county,
+        projectSummary: projectSummary || undefined
+      });
+
+      // Combine results
+      if (!combinedReviewResult) {
+        combinedReviewResult = chunkReviewResult;
+      } else {
+        // Merge findings
+        combinedReviewResult.criticalFindings = [
+          ...combinedReviewResult.criticalFindings,
+          ...chunkReviewResult.criticalFindings
+        ];
+        combinedReviewResult.majorFindings = [
+          ...combinedReviewResult.majorFindings,
+          ...chunkReviewResult.majorFindings
+        ];
+        combinedReviewResult.minorFindings = [
+          ...combinedReviewResult.minorFindings,
+          ...chunkReviewResult.minorFindings
+        ];
+        combinedReviewResult.totalFindings += chunkReviewResult.totalFindings;
+
+        // Update compliance status
+        combinedReviewResult.isCompliant = combinedReviewResult.isCompliant && chunkReviewResult.isCompliant;
+
+        // Combine summaries
+        combinedReviewResult.summary = `${combinedReviewResult.summary}\n\nPages ${chunk.pages.join(', ')}:\n${chunkReviewResult.summary}`;
+      }
+    }
+
+    if (!combinedReviewResult) {
+      throw new Error('Failed to process PDF chunks');
+    }
 
     console.log('Review completed:', {
-      isCompliant: reviewResult.isCompliant,
-      totalFindings: reviewResult.totalFindings
+      isCompliant: combinedReviewResult.isCompliant,
+      totalFindings: combinedReviewResult.totalFindings
     });
 
     // Route the email based on the review results
     await routeReviewResults(
-      reviewResult,
+      combinedReviewResult,
       buffer,
       file.name,
       submitterEmail,
@@ -91,8 +128,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      isCompliant: reviewResult.isCompliant,
-      totalFindings: reviewResult.totalFindings
+      isCompliant: combinedReviewResult.isCompliant,
+      totalFindings: combinedReviewResult.totalFindings
     });
   } catch (error) {
     console.error('Error processing plan submission:', error);

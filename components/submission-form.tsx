@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { FileWithPreview } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { validatePDF, getFileSizeInMB } from '@/lib/pdf-utils';
 
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -58,11 +59,34 @@ export function SubmissionForm() {
         return;
       }
 
-      const fileWithPreview = Object.assign(file, {
-        preview: URL.createObjectURL(file),
-      });
+      // Check file size (50MB limit)
+      const fileSizeMB = getFileSizeInMB(file);
+      if (fileSizeMB > 50) {
+        toast({
+          variant: "destructive",
+          title: "File too large",
+          description: "Please upload a PDF file smaller than 50MB",
+        });
+        return;
+      }
 
-      setFile(fileWithPreview);
+      // Validate PDF
+      validatePDF(file).then(isValid => {
+        if (!isValid) {
+          toast({
+            variant: "destructive",
+            title: "Invalid PDF",
+            description: "The file appears to be corrupted or invalid",
+          });
+          return;
+        }
+
+        const fileWithPreview = Object.assign(file, {
+          preview: URL.createObjectURL(file),
+        });
+
+        setFile(fileWithPreview);
+      });
     }
   }, [toast]);
 
@@ -236,7 +260,7 @@ export function SubmissionForm() {
                             Drag & drop your architectural plan
                           </p>
                           <p className="text-sm text-muted-foreground">
-                            PDF files only, max 20MB
+                            PDF files only, max 50MB
                           </p>
                         </div>
                         <Button type="button" variant="outline">
