@@ -133,7 +133,7 @@ export function HowItWorks() {
                 </div>
               </CardContent>
             </Card>
-            
+
             <Card className="border-destructive bg-destructive/5">
               <CardHeader>
                 <CardTitle className="flex items-center text-destructive">

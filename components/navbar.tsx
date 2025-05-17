@@ -1,6 +1,7 @@
-import { Building2, Menu } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import Link from 'next/link';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import { CivicStreamLogo } from './CivicStreamLogo';
 
 export function Navbar() {
   return (
@@ -8,7 +9,7 @@ export function Navbar() {
       <div className="flex h-16 items-center max-w-screen-xl w-full px-4 md:px-0 md:mx-auto">
         <Link href="/">
           <div className="flex gap-2 items-center mr-4">
-            <Building2 className="h-6 w-6 text-primary" />
+            <CivicStreamLogo className="h-8 w-8" />
             <span className="text-xl font-semibold">CivicStream</span>
           </div>
         </Link>
