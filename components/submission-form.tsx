@@ -128,6 +128,7 @@ export function SubmissionForm() {
       console.log('Submitting plan for review:', {
         fileName: file.name,
         fileSize: file.size,
+        fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
         submitterEmail: data.submitterEmail,
         cityPlannerEmail: data.cityPlannerEmail,
         address: data.address,

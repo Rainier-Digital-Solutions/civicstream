@@ -4,13 +4,31 @@ import { routeReviewResults } from '@/lib/email';
 import { chunkPDF } from '@/lib/pdf-utils';
 
 export const dynamic = 'force-dynamic';
+export const config = {
+  api: {
+    bodyParser: false,
+    responseLimit: false,
+  },
+};
 
-export async function POST(req: NextRequest) {
+const TIMEOUT_MS = 300000; // 5 minutes
+
+// Memory usage logging utility
+const logMemoryUsage = () => {
+  const used = process.memoryUsage();
+  console.log('[API] Memory usage:', {
+    rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
+    heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`,
+    heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
+    external: `${Math.round(used.external / 1024 / 1024)}MB`
+  });
+};
+
+async function processSubmission(req: NextRequest) {
   console.log('[API] Received plan submission request');
+  logMemoryUsage();
 
   try {
-    console.log('Received plan submission request');
-
     const formData = await req.formData();
     console.log('[API] FormData received:', {
       hasFile: formData.has('file'),
@@ -23,6 +41,13 @@ export async function POST(req: NextRequest) {
     });
 
     const file = formData.get('file') as File | null;
+    console.log('[API] File details:', {
+      fileName: file?.name,
+      fileSize: file?.size,
+      fileSizeMB: file ? (file.size / (1024 * 1024)).toFixed(2) : null,
+      fileType: file?.type
+    });
+
     const submitterEmail = formData.get('submitterEmail') as string;
     const cityPlannerEmail = formData.get('cityPlannerEmail') as string;
     const address = formData.get('address') as string;
@@ -47,9 +72,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Add size validation before processing
+    if (file.size > 50 * 1024 * 1024) { // 50MB in bytes
+      console.error('[API] File too large:', {
+        fileName: file.name,
+        fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
+        maxSizeMB: 50
+      });
+      return NextResponse.json(
+        { error: 'File size exceeds 50MB limit' },
+        { status: 400 }
+      );
+    }
+
     console.log('Processing submission:', {
       fileName: file.name,
       fileSize: file.size,
+      fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
       submitterEmail,
       cityPlannerEmail,
       address,
@@ -61,11 +100,13 @@ export async function POST(req: NextRequest) {
 
     // Convert file to buffer
     const buffer = Buffer.from(await file.arrayBuffer());
+    logMemoryUsage();
 
     // Chunk the PDF
     console.log('Chunking PDF...');
     const chunks = await chunkPDF(buffer);
     console.log(`PDF chunked into ${chunks.length} parts`);
+    logMemoryUsage();
 
     // Process each chunk and combine results
     let combinedReviewResult = null;
@@ -116,6 +157,7 @@ export async function POST(req: NextRequest) {
       isCompliant: combinedReviewResult.isCompliant,
       totalFindings: combinedReviewResult.totalFindings
     });
+    logMemoryUsage();
 
     // Route the email based on the review results
     await routeReviewResults(
@@ -134,7 +176,29 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error('Error processing plan submission:', error);
     return NextResponse.json(
-      { error: 'Failed to process submission' },
+      { error: error instanceof Error ? error.message : 'Failed to process submission' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: NextRequest): Promise<Response> {
+  const timeoutPromise = new Promise<Response>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error('Request timeout'));
+    }, TIMEOUT_MS);
+  });
+
+  try {
+    const result = await Promise.race([
+      processSubmission(req),
+      timeoutPromise
+    ]);
+    return result;
+  } catch (error) {
+    console.error('[API] Error processing submission:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to process submission' },
       { status: 500 }
     );
   }
