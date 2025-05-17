@@ -17,7 +17,7 @@ export function Hero() {
             </div>
             <div className="flex flex-col gap-2 min-[400px]:flex-row">
               <Link href="#submission-form">
-                <Button className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white">
+                <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
                   Submit Plans
                 </Button>
               </Link>
@@ -34,8 +34,8 @@ export function Hero() {
                 <div className="text-lg font-semibold">Automated Plan Review</div>
                 <div className="grid grid-cols-3 gap-2 my-4">
                   {Array.from({ length: 9 }).map((_, i) => (
-                    <div 
-                      key={i} 
+                    <div
+                      key={i}
                       className="h-16 w-16 rounded border border-primary/20 bg-background/50 flex items-center justify-center"
                     >
                       <div className="h-12 w-12 bg-blue-100/20 backdrop-blur rounded"></div>
