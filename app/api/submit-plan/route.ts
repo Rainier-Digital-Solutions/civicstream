@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { reviewArchitecturalPlan } from '@/lib/openai';
 import { routeReviewResults } from '@/lib/email';
 import { chunkPDF } from '@/lib/pdf-utils';
-import { del } from '@vercel/blob';
+import { del, list } from '@vercel/blob';
 
 export const dynamic = 'force-dynamic';
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -65,37 +65,56 @@ async function processSubmission(req: NextRequest) {
       console.log('[API] Environment:', process.env.NODE_ENV);
       console.log('[API] Vercel Environment:', process.env.VERCEL_ENV);
 
-      // Add headers to help with CORS and caching
-      const response = await fetch(blobUrl, {
-        signal: controller.signal,
-        headers: {
-          'Accept': 'application/pdf',
-          'Cache-Control': 'no-cache'
-        },
-        // Add credentials for preview environment
-        credentials: process.env.VERCEL_ENV === 'preview' ? 'include' : 'same-origin'
-      });
-      clearTimeout(timeoutId);
+      let buffer: Buffer;
 
-      if (!response.ok) {
-        console.error('[API] Fetch failed:', {
-          status: response.status,
-          statusText: response.statusText,
-          headers: Object.fromEntries(response.headers.entries())
+      if (process.env.VERCEL_ENV === 'preview') {
+        console.log('[API] Using direct fetch in preview environment with modified headers');
+        const response = await fetch(blobUrl, {
+          signal: controller.signal,
+          headers: {
+            'Accept': 'application/pdf',
+            'Cache-Control': 'no-cache',
+            'Authorization': `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`
+          }
         });
-        throw new Error(`Failed to fetch file from Blob: ${response.status} ${response.statusText}`);
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          console.error('[API] Fetch failed:', {
+            status: response.status,
+            statusText: response.statusText,
+            headers: Object.fromEntries(response.headers.entries())
+          });
+          throw new Error(`Failed to fetch file from Blob: ${response.status} ${response.statusText}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        buffer = Buffer.from(arrayBuffer);
+      } else {
+        // Use fetch for development and production
+        const response = await fetch(blobUrl, {
+          signal: controller.signal,
+          headers: {
+            'Accept': 'application/pdf',
+            'Cache-Control': 'no-cache'
+          },
+          credentials: 'same-origin'
+        });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          console.error('[API] Fetch failed:', {
+            status: response.status,
+            statusText: response.statusText,
+            headers: Object.fromEntries(response.headers.entries())
+          });
+          throw new Error(`Failed to fetch file from Blob: ${response.status} ${response.statusText}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        buffer = Buffer.from(arrayBuffer);
       }
 
-      console.log('[API] Fetch successful, getting content length...');
-      const contentLength = response.headers.get('content-length');
-      console.log('[API] Content length:', contentLength ? `${Math.round(parseInt(contentLength) / 1024 / 1024)}MB` : 'unknown');
-
-      console.log('[API] Converting to array buffer...');
-      const arrayBuffer = await response.arrayBuffer();
-      console.log('[API] Array buffer size:', `${Math.round(arrayBuffer.byteLength / 1024 / 1024)}MB`);
-
-      console.log('[API] Converting to Buffer...');
-      const buffer = Buffer.from(arrayBuffer);
       console.log('[API] Buffer size:', `${Math.round(buffer.length / 1024 / 1024)}MB`);
 
       // Chunk the PDF
