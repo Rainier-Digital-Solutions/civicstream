@@ -126,7 +126,8 @@ export function SubmissionForm() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const uploadResponse = await fetch('/api/upload', {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+      const uploadResponse = await fetch(`${baseUrl}/api/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -158,15 +159,13 @@ export function SubmissionForm() {
       setSubmissionStatus('processing');
 
       // Fire and forget the processing request
-      const processResponse = await fetch('/api/submit-plan', {
+      fetch(`${baseUrl}/api/submit-plan`, {
         method: 'POST',
         body: submissionFormData,
+      }).catch(error => {
+        console.error('Error processing submission:', error);
+        // Don't show error to user since we're already showing success
       });
-
-      if (!processResponse.ok) {
-        const errorData = await processResponse.json();
-        throw new Error(errorData.error || 'Failed to process submission');
-      }
 
       // Show success message immediately
       setSubmissionStatus('success');

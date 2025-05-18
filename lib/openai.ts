@@ -249,13 +249,13 @@ Please analyze the complete set of architectural plans and use the web_search to
             content: "Please analyze the architectural plans using the building codes and regulations found in the search results. Compare the plans against these codes to identify any compliance issues. Provide a detailed review following the required JSON format."
           }
         ],
-        stream: true
+        stream: false,
+        max_tokens: 4096
       });
 
-      let fullResponse = '';
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || '';
-        fullResponse += content;
+      const fullResponse = stream.choices[0].message.content;
+      if (!fullResponse) {
+        throw new Error('No response content received from OpenAI');
       }
 
       console.log('[OpenAI] Raw response length:', fullResponse.length);

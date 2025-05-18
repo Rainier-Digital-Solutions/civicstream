@@ -1,28 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { reviewArchitecturalPlan } from '@/lib/openai';
-import { routeReviewResults } from '@/lib/email';
 import { chunkPDF } from '@/lib/pdf-utils';
 import { del, list, put } from '@vercel/blob';
 import * as vercelBlob from '@vercel/blob';
 
 export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
-const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+export const runtime = 'edge';
 
-export const config = {
-  api: {
-    responseLimit: '50mb',
-  },
-}
+const TIMEOUT_MS = 300000; // 5 minutes
+const BATCH_SIZE = 5;
 
 function logMemoryUsage() {
-  const used = process.memoryUsage();
-  console.log('[API] Memory usage:', {
-    rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
-    heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`,
-    heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
-    external: `${Math.round(used.external / 1024 / 1024)}MB`,
-  });
+  if (process.env.VERCEL_ENV) {
+    console.log('[API] Memory usage:', {
+      rss: process.memoryUsage().rss / 1024 / 1024,
+      heapTotal: process.memoryUsage().heapTotal / 1024 / 1024,
+      heapUsed: process.memoryUsage().heapUsed / 1024 / 1024,
+    });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  return processSubmission(req);
 }
 
 async function processSubmission(req: NextRequest) {
@@ -63,55 +62,22 @@ async function processSubmission(req: NextRequest) {
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-      console.log('[API] Starting fetch request...');
-      console.log('[API] Environment:', process.env.NODE_ENV);
-      console.log('[API] Vercel Environment:', process.env.VERCEL_ENV);
-
-      let buffer: Buffer;
-
       const response = await fetch(blobUrl, {
         signal: controller.signal,
-        headers: {
-          'Accept': 'application/pdf',
-          'Cache-Control': 'no-cache'
-        },
-        credentials: 'same-origin'
       });
-      clearTimeout(timeoutId);
 
       if (!response.ok) {
-        console.error('[API] Fetch failed:', {
-          status: response.status,
-          statusText: response.statusText,
-          headers: Object.fromEntries(response.headers.entries())
-        });
-        throw new Error(`Failed to fetch file from Blob: ${response.status} ${response.statusText}`);
+        throw new Error(`Failed to fetch blob: ${response.statusText}`);
       }
 
-      // Check content type
-      const contentType = response.headers.get('content-type');
-      if (!contentType?.includes('application/pdf')) {
-        console.error('[API] Invalid content type:', contentType);
-        throw new Error('Invalid content type: Expected PDF file');
-      }
+      const buffer = await response.arrayBuffer();
+      clearTimeout(timeoutId);
 
-      const arrayBuffer = await response.arrayBuffer();
-      buffer = Buffer.from(arrayBuffer);
-
-      if (buffer.length === 0) {
-        throw new Error('Received empty file from Blob');
-      }
-
-      console.log('[API] Buffer size:', `${Math.round(buffer.length / 1024 / 1024)}MB`);
-
-      // Chunk the PDF
-      console.log('[API] Chunking PDF...');
-      const chunks = await chunkPDF(buffer);
-      console.log(`[API] PDF chunked into ${chunks.length} parts`);
+      // Process the PDF in chunks
+      const chunks = await chunkPDF(Buffer.from(buffer));
+      console.log(`[API] Split PDF into ${chunks.length} chunks`);
       logMemoryUsage();
 
-      // Process chunks in batches for OpenAI
-      const BATCH_SIZE = 3; // Process 3 chunks at a time
       const results = [];
 
       for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
@@ -162,14 +128,25 @@ async function processSubmission(req: NextRequest) {
       });
       logMemoryUsage();
 
-      // Route the email based on the review results
-      await routeReviewResults(
-        combinedResult,
-        buffer,
-        new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
-        submitterEmail,
-        cityPlannerEmail
-      );
+      // Send email using the new email endpoint
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+      const emailResponse = await fetch(`${baseUrl}/api/send-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reviewResult: combinedResult,
+          pdfBuffer: Buffer.from(buffer).toString('base64'),
+          fileName: new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
+          submitterEmail,
+          cityPlannerEmail,
+        }),
+      });
+
+      if (!emailResponse.ok) {
+        throw new Error('Failed to send email');
+      }
 
       // Clean up the Blob
       try {
@@ -197,14 +174,4 @@ async function processSubmission(req: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-export async function POST(req: NextRequest): Promise<Response> {
-  // Process the submission asynchronously
-  processSubmission(req).catch(error => {
-    console.error('[API] Unhandled error in background processing:', error);
-  });
-
-  // Return immediately
-  return NextResponse.json({ success: true });
 }
