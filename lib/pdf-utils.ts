@@ -1,7 +1,7 @@
 import { PDFDocument } from 'pdf-lib';
 
-const MAX_CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
-const MAX_PAGES_PER_CHUNK = 5; // Process 5 pages at a time
+const MAX_CHUNK_SIZE = 5 * 1024 * 1024; // Reduce to 5MB chunks
+const MAX_PAGES_PER_CHUNK = 3; // Reduce to 3 pages per chunk
 const MAX_TOKENS_PER_CHUNK = 1500; // Maximum tokens per chunk
 
 // Simple token counting function
@@ -130,7 +130,12 @@ export async function chunkPDF(input: File | Buffer): Promise<PDFChunk[]> {
             await input.arrayBuffer() :
             input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength);
         const uint8Array = new Uint8Array(arrayBuffer);
-        const pdfDoc = await PDFDocument.load(uint8Array);
+
+        // Load with compression options
+        const pdfDoc = await PDFDocument.load(uint8Array, {
+            updateMetadata: false,
+            ignoreEncryption: true
+        });
 
         // Extract pages
         const pages = Array.from({ length: pdfDoc.getPageCount() }, (_, i) => ({
@@ -154,10 +159,11 @@ export async function chunkPDF(input: File | Buffer): Promise<PDFChunk[]> {
                     chunkDoc.addPage(copiedPage);
                 }
 
-                // Compress the PDF chunk
+                // Compress the PDF chunk with aggressive options
                 const compressedBytes = await chunkDoc.save({
                     useObjectStreams: true,
-                    addDefaultPage: false
+                    addDefaultPage: false,
+                    objectsPerTick: 20
                 });
 
                 // Check if compressed chunk is still too large
@@ -211,19 +217,16 @@ async function splitLargeChunk(chunkDoc: PDFDocument, pageNumbers: number[]): Pr
     const subChunks: PDFChunk[] = [];
     const pageCount = chunkDoc.getPageCount();
 
-    // Split into smaller chunks of 2 pages each
-    for (let i = 0; i < pageCount; i += 2) {
+    // Split into smaller chunks of 1 page each
+    for (let i = 0; i < pageCount; i++) {
         const subDoc = await PDFDocument.create();
-        const pagesToCopy = Math.min(2, pageCount - i);
-
-        for (let j = 0; j < pagesToCopy; j++) {
-            const [copiedPage] = await subDoc.copyPages(chunkDoc, [i + j]);
-            subDoc.addPage(copiedPage);
-        }
+        const [copiedPage] = await subDoc.copyPages(chunkDoc, [i]);
+        subDoc.addPage(copiedPage);
 
         const compressedBytes = await subDoc.save({
             useObjectStreams: true,
-            addDefaultPage: false
+            addDefaultPage: false,
+            objectsPerTick: 20
         });
 
         const base64 = btoa(Array.from(new Uint8Array(compressedBytes))
@@ -231,8 +234,8 @@ async function splitLargeChunk(chunkDoc: PDFDocument, pageNumbers: number[]): Pr
             .join(''));
 
         subChunks.push({
-            pages: pageNumbers.slice(i, i + pagesToCopy),
-            content: `Pages ${pageNumbers.slice(i, i + pagesToCopy).join(', ')}`,
+            pages: [pageNumbers[i]],
+            content: `Page ${pageNumbers[i]}`,
             base64
         });
     }
