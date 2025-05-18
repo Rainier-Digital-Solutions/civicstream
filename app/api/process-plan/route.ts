@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { reviewArchitecturalPlan } from '@/lib/openai';
+import { reviewArchitecturalPlan, extractPlanMetadata, reviewWithMetadata, PlanMetadata } from '@/lib/openai';
 import { chunkPDF } from '@/lib/pdf-utils';
 import { del } from '@vercel/blob';
 import * as vercelBlob from '@vercel/blob';
@@ -9,6 +9,7 @@ export const runtime = 'nodejs';
 
 const TIMEOUT_MS = 300000; // 5 minutes
 const BATCH_SIZE = 5;
+const MAX_SINGLE_REQUEST_SIZE = 2000000; // Maximum size in bytes for single request (~2MB)
 
 export async function POST(req: NextRequest) {
     // Start the processing in the background without awaiting
@@ -63,57 +64,66 @@ async function processSubmission(req: NextRequest) {
             const buffer = await response.arrayBuffer();
             clearTimeout(timeoutId);
 
-            // Process the PDF in chunks
-            const chunks = await chunkPDF(Buffer.from(buffer));
-            console.log(`[ProcessPlan] Split PDF into ${chunks.length} chunks`);
+            const projectDetails = {
+                address,
+                parcelNumber,
+                city,
+                county,
+                projectSummary: projectSummary || undefined
+            };
 
-            const results = [];
+            let reviewResult;
 
-            for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-                const batchChunks = chunks.slice(i, i + BATCH_SIZE);
-                console.log(`[ProcessPlan] Processing batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(chunks.length / BATCH_SIZE)}`);
-
-                // Combine chunks in this batch
-                const batchBase64 = batchChunks.map(chunk => chunk.base64).join('\n\n');
-
-                const projectDetails = {
-                    address,
-                    parcelNumber,
-                    city,
-                    county,
-                    projectSummary: projectSummary || undefined
-                };
+            // Check if we can process the entire PDF at once
+            if (buffer.byteLength <= MAX_SINGLE_REQUEST_SIZE) {
+                console.log(`[ProcessPlan] Processing entire PDF in single request (${buffer.byteLength} bytes)`);
+                const fullPdfBase64 = Buffer.from(buffer).toString('base64');
 
                 try {
-                    const reviewResult = await reviewArchitecturalPlan(batchBase64, projectDetails);
-                    results.push(reviewResult);
-
-                    console.log(`[ProcessPlan] Batch ${Math.floor(i / BATCH_SIZE) + 1} review completed:`, {
+                    reviewResult = await reviewArchitecturalPlan(fullPdfBase64, projectDetails);
+                    console.log('[ProcessPlan] Full PDF review completed:', {
                         isCompliant: reviewResult.isCompliant,
                         totalFindings: reviewResult.totalFindings
                     });
                 } catch (error) {
-                    console.error(`[ProcessPlan] Error processing batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error);
+                    console.error('[ProcessPlan] Error processing full PDF:', error);
                     throw error;
                 }
+            } else {
+                // Process the PDF in chunks with a two-phase approach
+                const chunks = await chunkPDF(Buffer.from(buffer));
+                console.log(`[ProcessPlan] Split PDF into ${chunks.length} chunks (two-phase approach)`);
+
+                // Phase 1: Extract metadata from all chunks
+                console.log('[ProcessPlan] Phase 1: Extracting metadata from all chunks');
+                const metadataResults: PlanMetadata[] = [];
+
+                for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+                    const batchChunks = chunks.slice(i, i + BATCH_SIZE);
+                    console.log(`[ProcessPlan] Processing metadata batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(chunks.length / BATCH_SIZE)}`);
+
+                    // Process chunks in parallel for metadata extraction
+                    const batchPromises = batchChunks.map(chunk =>
+                        extractPlanMetadata(chunk.base64, projectDetails)
+                            .catch((error: Error) => {
+                                console.error(`[ProcessPlan] Error extracting metadata from chunk:`, error);
+                                return null;
+                            })
+                    );
+
+                    const batchResults = await Promise.all(batchPromises);
+                    metadataResults.push(...batchResults.filter(Boolean) as PlanMetadata[]);
+                }
+
+                // Phase 2: Process the consolidated metadata in a single request
+                console.log('[ProcessPlan] Phase 2: Processing consolidated metadata');
+                reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
+
+                console.log('[ProcessPlan] Two-phase review completed:', {
+                    isCompliant: reviewResult.isCompliant,
+                    totalFindings: reviewResult.totalFindings
+                });
             }
-
-            // Combine results from all batches
-            const combinedResult = {
-                summary: results.map(r => r.summary).join('\n\n'),
-                criticalFindings: results.flatMap(r => r.criticalFindings),
-                majorFindings: results.flatMap(r => r.majorFindings),
-                minorFindings: results.flatMap(r => r.minorFindings),
-                totalFindings: results.reduce((sum, r) => sum + r.totalFindings, 0),
-                isCompliant: results.every(r => r.isCompliant),
-                cityPlannerEmailBody: results.map(r => r.cityPlannerEmailBody).join('\n\n'),
-                submitterEmailBody: results.map(r => r.submitterEmailBody).join('\n\n')
-            };
-
-            console.log('[ProcessPlan] All batches processed:', {
-                isCompliant: combinedResult.isCompliant,
-                totalFindings: combinedResult.totalFindings
-            });
 
             // Send email using the email endpoint
             const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
@@ -121,7 +131,7 @@ async function processSubmission(req: NextRequest) {
                 baseUrl,
                 submitterEmail,
                 cityPlannerEmail,
-                isCompliant: combinedResult.isCompliant
+                isCompliant: reviewResult.isCompliant
             });
 
             const emailResponse = await fetch(`${baseUrl}/api/send-email`, {
@@ -130,7 +140,7 @@ async function processSubmission(req: NextRequest) {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    reviewResult: combinedResult,
+                    reviewResult,
                     blobUrl: blobUrl,
                     fileName: new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
                     submitterEmail,
