@@ -7,7 +7,7 @@ export const runtime = 'nodejs';
 
 // Email configuration
 const isSecure = process.env.EMAIL_SECURE === 'true';
-const transporter = nodemailer.createTransport({
+const emailConfig = {
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
     port: isSecure ? 465 : 587,
     secure: isSecure,
@@ -15,9 +15,33 @@ const transporter = nodemailer.createTransport({
         user: process.env.EMAIL_USER || '',
         pass: process.env.EMAIL_PASSWORD || '',
     },
+};
+
+// Validate email configuration
+if (!emailConfig.auth.user || !emailConfig.auth.pass) {
+    console.error('[Email] Missing email configuration:', {
+        hasHost: !!emailConfig.host,
+        hasUser: !!emailConfig.auth.user,
+        hasPassword: !!emailConfig.auth.pass,
+        isSecure,
+        port: emailConfig.port
+    });
+}
+
+const transporter = nodemailer.createTransport(emailConfig);
+
+// Verify transporter configuration
+transporter.verify(function (error, success) {
+    if (error) {
+        console.error('[Email] Transporter verification failed:', error);
+    } else {
+        console.log('[Email] Transporter is ready to send messages');
+    }
 });
 
 export async function POST(req: NextRequest) {
+    console.log('[Email] Received email request');
+
     try {
         const body = await req.json();
         const {
@@ -28,7 +52,24 @@ export async function POST(req: NextRequest) {
             cityPlannerEmail,
         } = body;
 
+        // Log request data (excluding sensitive information)
+        console.log('[Email] Request data:', {
+            hasReviewResult: !!reviewResult,
+            hasPdfBuffer: !!pdfBuffer,
+            fileName,
+            submitterEmail,
+            cityPlannerEmail,
+            isCompliant: reviewResult?.isCompliant
+        });
+
         if (!reviewResult || !pdfBuffer || !fileName || !submitterEmail || !cityPlannerEmail) {
+            console.error('[Email] Missing required fields:', {
+                hasReviewResult: !!reviewResult,
+                hasPdfBuffer: !!pdfBuffer,
+                hasFileName: !!fileName,
+                hasSubmitterEmail: !!submitterEmail,
+                hasCityPlannerEmail: !!cityPlannerEmail
+            });
             return NextResponse.json(
                 { error: 'Missing required fields' },
                 { status: 400 }
@@ -41,29 +82,52 @@ export async function POST(req: NextRequest) {
             contentType: 'application/pdf',
         };
 
-        if (reviewResult.isCompliant) {
-            // Send to city planner if compliant
-            await transporter.sendMail({
-                from: process.env.EMAIL_FROM || 'noreply@civicstream.com',
-                to: cityPlannerEmail,
-                subject: 'Compliant Architectural Plan for Review',
-                html: reviewResult.cityPlannerEmailBody,
-                attachments: [attachment],
-            });
-        } else {
-            // Send back to submitter if non-compliant
-            await transporter.sendMail({
-                from: process.env.EMAIL_FROM || 'noreply@civicstream.com',
-                to: submitterEmail,
-                subject: 'Architectural Plan Review Results - Action Required',
-                html: reviewResult.submitterEmailBody,
-                attachments: [attachment],
-            });
-        }
+        const emailOptions = {
+            from: process.env.EMAIL_FROM || 'noreply@civicstream.com',
+            to: reviewResult.isCompliant ? cityPlannerEmail : submitterEmail,
+            subject: reviewResult.isCompliant
+                ? 'Compliant Architectural Plan for Review'
+                : 'Architectural Plan Review Results - Action Required',
+            html: reviewResult.isCompliant
+                ? reviewResult.cityPlannerEmailBody
+                : reviewResult.submitterEmailBody,
+            attachments: [attachment],
+        };
 
-        return NextResponse.json({ success: true });
+        console.log('[Email] Attempting to send email:', {
+            to: emailOptions.to,
+            subject: emailOptions.subject,
+            attachmentSize: attachment.content.length,
+            from: emailOptions.from
+        });
+
+        try {
+            const info = await transporter.sendMail(emailOptions);
+            console.log('[Email] Email sent successfully:', {
+                messageId: info.messageId,
+                response: info.response
+            });
+            return NextResponse.json({ success: true });
+        } catch (sendError) {
+            console.error('[Email] Failed to send email:', {
+                error: sendError,
+                errorMessage: sendError instanceof Error ? sendError.message : 'Unknown error',
+                errorStack: sendError instanceof Error ? sendError.stack : undefined,
+                emailConfig: {
+                    host: emailConfig.host,
+                    port: emailConfig.port,
+                    secure: emailConfig.secure,
+                    hasAuth: !!emailConfig.auth.user && !!emailConfig.auth.pass
+                }
+            });
+            throw sendError;
+        }
     } catch (error) {
-        console.error('Error sending email:', error);
+        console.error('[Email] Error processing email request:', {
+            error,
+            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+            errorStack: error instanceof Error ? error.stack : undefined
+        });
         return NextResponse.json(
             { error: 'Failed to send email: ' + (error instanceof Error ? error.message : 'Unknown error') },
             { status: 500 }
