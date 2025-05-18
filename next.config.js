@@ -65,7 +65,7 @@ module.exports = {
           {
             key: 'Access-Control-Allow-Origin',
             value: process.env.VERCEL_ENV === 'production'
-              ? 'https://civicstream.io'
+              ? 'https://www.civicstream.io'
               : 'https://test.civicstream.io',
           },
           {
