@@ -150,6 +150,7 @@ export async function reviewArchitecturalPlan(
   maxRetries: number = 3
 ): Promise<ReviewResult> {
   console.log('[OpenAI] Starting architectural plan review');
+  console.log('[OpenAI] Base64 length:', pdfBase64.length);
 
   let attempts = 0;
   let lastError: Error | null = null;
@@ -171,7 +172,7 @@ ${projectDetails.projectSummary ? `Project Summary: ${projectDetails.projectSumm
 
 [PDF Architectural Plan - Base64 Length: ${pdfBase64.length}]
 
-Please analyze these plans and use the web_search tool to find applicable building codes and regulations for this location.`,
+Please analyze these plans and use the web_search tool to find applicable building codes and regulations for this location. Focus on the specific pages provided in this chunk.`,
         },
       ];
 
@@ -197,10 +198,11 @@ Please analyze these plans and use the web_search tool to find applicable buildi
 
       console.log(`[OpenAI] Attempt ${attempts + 1}/${maxRetries}: Sending initial request to OpenAI`);
       const response = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-4-vision-preview",
         messages: baseMessages,
         tools,
         tool_choice: "auto",
+        max_tokens: 4096,
         stream: false
       });
 

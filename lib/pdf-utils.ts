@@ -75,8 +75,11 @@ export async function chunkPagesByTokens(pages: { text: string; pageNumber: numb
             page.text;
 
         const tokenCount = countTokens(tentativeText);
+        const shouldCreateNewChunk =
+            tokenCount > MAX_TOKENS_PER_CHUNK ||
+            currentChunk.pageNumbers.length >= MAX_PAGES_PER_CHUNK;
 
-        if (tokenCount > MAX_TOKENS_PER_CHUNK && currentChunk.text) {
+        if (shouldCreateNewChunk && currentChunk.text) {
             // Save current chunk and start a new one
             chunks.push({
                 pages: currentChunk.pageNumbers,
@@ -136,7 +139,7 @@ export async function chunkPDF(input: File | Buffer): Promise<PDFChunk[]> {
         }));
         console.log('[PDF] Extracted', pages.length, 'pages');
 
-        // Chunk by tokens
+        // Chunk by tokens and pages
         const textChunks = await chunkPagesByTokens(pages);
         console.log('[PDF] Created', textChunks.length, 'text chunks');
 
@@ -151,15 +154,34 @@ export async function chunkPDF(input: File | Buffer): Promise<PDFChunk[]> {
                     chunkDoc.addPage(copiedPage);
                 }
 
-                // Convert to base64
-                const chunkBytes = await chunkDoc.save();
-                const base64 = btoa(Array.from(new Uint8Array(chunkBytes))
+                // Compress the PDF chunk
+                const compressedBytes = await chunkDoc.save({
+                    useObjectStreams: true,
+                    addDefaultPage: false
+                });
+
+                // Check if compressed chunk is still too large
+                if (compressedBytes.length > MAX_CHUNK_SIZE) {
+                    console.warn(`[PDF] Compressed chunk for pages ${textChunk.pages.join(', ')} is still too large:`, {
+                        size: compressedBytes.length,
+                        sizeMB: (compressedBytes.length / (1024 * 1024)).toFixed(2),
+                        maxSizeMB: MAX_CHUNK_SIZE / (1024 * 1024)
+                    });
+                    // Split this chunk into smaller pieces
+                    const subChunks = await splitLargeChunk(chunkDoc, textChunk.pages);
+                    chunks.push(...subChunks);
+                    continue;
+                }
+
+                // Convert to base64 with compression
+                const base64 = btoa(Array.from(new Uint8Array(compressedBytes))
                     .map(byte => String.fromCharCode(byte))
                     .join(''));
 
                 console.log(`[PDF] Successfully processed chunk for pages ${textChunk.pages.join(', ')}:`, {
-                    chunkSize: chunkBytes.length,
-                    chunkSizeMB: (chunkBytes.length / (1024 * 1024)).toFixed(2)
+                    compressedSize: compressedBytes.length,
+                    compressedSizeMB: (compressedBytes.length / (1024 * 1024)).toFixed(2),
+                    base64Length: base64.length
                 });
 
                 chunks.push({
@@ -174,7 +196,8 @@ export async function chunkPDF(input: File | Buffer): Promise<PDFChunk[]> {
 
         console.log('[PDF] Chunking completed:', {
             totalChunks: chunks.length,
-            totalPages: pages.length
+            totalPages: pages.length,
+            averageChunkSize: chunks.reduce((acc, chunk) => acc + chunk.base64.length, 0) / chunks.length
         });
 
         return chunks;
@@ -182,6 +205,39 @@ export async function chunkPDF(input: File | Buffer): Promise<PDFChunk[]> {
         console.error('[PDF] Error in chunkPDF:', error);
         throw new Error('Failed to chunk PDF: ' + (error instanceof Error ? error.message : 'Unknown error'));
     }
+}
+
+async function splitLargeChunk(chunkDoc: PDFDocument, pageNumbers: number[]): Promise<PDFChunk[]> {
+    const subChunks: PDFChunk[] = [];
+    const pageCount = chunkDoc.getPageCount();
+
+    // Split into smaller chunks of 2 pages each
+    for (let i = 0; i < pageCount; i += 2) {
+        const subDoc = await PDFDocument.create();
+        const pagesToCopy = Math.min(2, pageCount - i);
+
+        for (let j = 0; j < pagesToCopy; j++) {
+            const [copiedPage] = await subDoc.copyPages(chunkDoc, [i + j]);
+            subDoc.addPage(copiedPage);
+        }
+
+        const compressedBytes = await subDoc.save({
+            useObjectStreams: true,
+            addDefaultPage: false
+        });
+
+        const base64 = btoa(Array.from(new Uint8Array(compressedBytes))
+            .map(byte => String.fromCharCode(byte))
+            .join(''));
+
+        subChunks.push({
+            pages: pageNumbers.slice(i, i + pagesToCopy),
+            content: `Pages ${pageNumbers.slice(i, i + pagesToCopy).join(', ')}`,
+            base64
+        });
+    }
+
+    return subChunks;
 }
 
 export async function validatePDF(file: File): Promise<boolean> {
