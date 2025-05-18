@@ -10,23 +10,12 @@ export const runtime = 'edge';
 const TIMEOUT_MS = 300000; // 5 minutes
 const BATCH_SIZE = 5;
 
-function logMemoryUsage() {
-  if (process.env.VERCEL_ENV) {
-    console.log('[API] Memory usage:', {
-      rss: process.memoryUsage().rss / 1024 / 1024,
-      heapTotal: process.memoryUsage().heapTotal / 1024 / 1024,
-      heapUsed: process.memoryUsage().heapUsed / 1024 / 1024,
-    });
-  }
-}
-
 export async function POST(req: NextRequest) {
   return processSubmission(req);
 }
 
 async function processSubmission(req: NextRequest) {
   console.log('[API] Received plan submission request');
-  logMemoryUsage();
 
   try {
     const formData = await req.formData();
@@ -76,7 +65,6 @@ async function processSubmission(req: NextRequest) {
       // Process the PDF in chunks
       const chunks = await chunkPDF(Buffer.from(buffer));
       console.log(`[API] Split PDF into ${chunks.length} chunks`);
-      logMemoryUsage();
 
       const results = [];
 
@@ -103,7 +91,6 @@ async function processSubmission(req: NextRequest) {
             isCompliant: reviewResult.isCompliant,
             totalFindings: reviewResult.totalFindings
           });
-          logMemoryUsage();
         } catch (error) {
           console.error(`[API] Error processing batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error);
           throw error;
@@ -126,7 +113,6 @@ async function processSubmission(req: NextRequest) {
         isCompliant: combinedResult.isCompliant,
         totalFindings: combinedResult.totalFindings
       });
-      logMemoryUsage();
 
       // Send email using the new email endpoint
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
