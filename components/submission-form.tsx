@@ -113,8 +113,25 @@ export function SubmissionForm() {
     setSubmissionStatus('uploading');
 
     try {
+      // Step 1: Get upload URL
+      const urlResponse = await fetch('/api/get-upload-url', {
+        method: 'POST',
+        body: JSON.stringify({
+          filename: file.name,
+          contentType: file.type,
+        }),
+      });
+      const { url, blobUrl } = await urlResponse.json();
+
+      // Step 2: Upload directly to Blob
+      await fetch(url, {
+        method: 'PUT',
+        body: file,
+      });
+
+      // Step 3: Submit form data with blob URL
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('blobUrl', blobUrl);
       formData.append('submitterEmail', data.submitterEmail);
       formData.append('cityPlannerEmail', data.cityPlannerEmail);
       formData.append('address', data.address);
@@ -125,74 +142,23 @@ export function SubmissionForm() {
         formData.append('projectSummary', data.projectSummary);
       }
 
-      console.log('API Base URL:', process.env.NEXT_PUBLIC_API_BASE_URL);
-      console.log('Full API URL:', `${process.env.NEXT_PUBLIC_API_BASE_URL}/api/submit-plan`);
-
-      console.log('Submitting plan for review:', {
-        fileName: file.name,
-        fileSize: file.size,
-        fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
-        submitterEmail: data.submitterEmail,
-        cityPlannerEmail: data.cityPlannerEmail,
-        address: data.address,
-        parcelNumber: data.parcelNumber,
-        city: data.city,
-        county: data.county,
-        hasProjectSummary: !!data.projectSummary
-      });
-
-      const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || '';
-      const apiUrl = `${apiBaseUrl}/api/submit-plan`;
-      console.log('Making request to:', apiUrl);
-      console.log('Environment:', process.env.VERCEL_ENV);
-      console.log('API Base URL:', process.env.NEXT_PUBLIC_API_BASE_URL);
-
-      const response = await fetch(apiUrl, {
+      // Fire and forget the processing request
+      fetch('/api/submit-plan', {
         method: 'POST',
         body: formData,
-        signal: AbortSignal.timeout(5 * 60 * 1000), // 5 minute timeout
+      }).catch(error => {
+        console.error('Error in background processing:', error);
+        // Send error notification to admin or monitoring service
       });
 
-      if (!response.ok) {
-        let errorMessage = 'Failed to submit plan';
-
-        // Handle specific error cases
-        if (response.status === 413) {
-          errorMessage = 'The file is too large. Please try a smaller file or compress it before uploading.';
-        } else if (response.status === 408 || response.status === 504) {
-          errorMessage = 'The request timed out. Please try again with a smaller file or compress it before uploading.';
-        } else {
-          try {
-            const errorData = await response.json();
-            errorMessage = errorData.error || errorMessage;
-          } catch (e) {
-            try {
-              const text = await response.text();
-              errorMessage = text || errorMessage;
-            } catch (e) {
-              errorMessage = response.statusText || errorMessage;
-            }
-          }
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      setSubmissionStatus('processing');
-
-      const result = await response.json();
-      console.log('Submission result:', result);
-
+      // Show success message immediately
       setSubmissionStatus('success');
-
       toast({
         title: "Plan submitted successfully",
-        description: `Your architectural plan has been submitted for review. ${result.isCompliant
-          ? 'The plan appears to be compliant and has been forwarded to the city planner.'
-          : 'The plan requires some adjustments and has been returned to your email.'
-          }`,
+        description: "Your architectural plan has been uploaded and is being processed. You will receive an email with the review results shortly.",
       });
 
+      // Reset form
       form.reset();
       setFile(null);
     } catch (error) {
@@ -200,8 +166,8 @@ export function SubmissionForm() {
       setSubmissionStatus('error');
       toast({
         variant: "destructive",
-        title: "Submission failed",
-        description: error instanceof Error ? error.message : "There was an error submitting your plan. Please try again.",
+        title: "Upload failed",
+        description: error instanceof Error ? error.message : "There was an error uploading your plan. Please try again.",
       });
     } finally {
       setIsSubmitting(false);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { reviewArchitecturalPlan } from '@/lib/openai';
 import { routeReviewResults } from '@/lib/email';
 import { chunkPDF } from '@/lib/pdf-utils';
+import { del } from '@vercel/blob';
 
 export const dynamic = 'force-dynamic';
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -28,23 +29,15 @@ async function processSubmission(req: NextRequest) {
 
   try {
     const formData = await req.formData();
-    console.log('[API] FormData received:', {
-      hasFile: formData.has('file'),
-      hasSubmitterEmail: formData.has('submitterEmail'),
-      hasCityPlannerEmail: formData.has('cityPlannerEmail'),
-      hasAddress: formData.has('address'),
-      hasParcelNumber: formData.has('parcelNumber'),
-      hasCity: formData.has('city'),
-      hasCounty: formData.has('county')
-    });
+    const blobUrl = formData.get('blobUrl') as string;
 
-    const file = formData.get('file') as File | null;
-    console.log('[API] File details:', {
-      fileName: file?.name,
-      fileSize: file?.size,
-      fileSizeMB: file ? (file.size / (1024 * 1024)).toFixed(2) : null,
-      fileType: file?.type
-    });
+    if (!blobUrl) {
+      console.error('[API] Missing blobUrl');
+      return NextResponse.json(
+        { error: 'Missing blobUrl' },
+        { status: 400 }
+      );
+    }
 
     const submitterEmail = formData.get('submitterEmail') as string;
     const cityPlannerEmail = formData.get('cityPlannerEmail') as string;
@@ -54,51 +47,23 @@ async function processSubmission(req: NextRequest) {
     const county = formData.get('county') as string;
     const projectSummary = formData.get('projectSummary') as string | null;
 
-    if (!file || !submitterEmail || !cityPlannerEmail || !address || !parcelNumber || !city || !county) {
-      console.error('[API] Missing required fields:', {
-        file: !!file,
-        submitterEmail,
-        cityPlannerEmail,
-        address,
-        parcelNumber,
-        city,
-        county
-      });
+    if (!submitterEmail || !cityPlannerEmail || !address || !parcelNumber || !city || !county) {
+      console.error('[API] Missing required fields');
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    // Add size validation before processing
-    if (file.size > 50 * 1024 * 1024) { // 50MB in bytes
-      console.error('[API] File too large:', {
-        fileName: file.name,
-        fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
-        maxSizeMB: 50
-      });
-      return NextResponse.json(
-        { error: 'File size exceeds 50MB limit' },
-        { status: 400 }
-      );
+    // Fetch the file from Blob
+    console.log('[API] Fetching file from Blob:', blobUrl);
+    const response = await fetch(blobUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch file from Blob: ${response.statusText}`);
     }
 
-    console.log('[API] Processing submission:', {
-      fileName: file.name,
-      fileSize: file.size,
-      fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
-      submitterEmail,
-      cityPlannerEmail,
-      address,
-      parcelNumber,
-      city,
-      county,
-      hasProjectSummary: !!projectSummary
-    });
-
-    // Convert file to buffer
-    const buffer = Buffer.from(await file.arrayBuffer());
-    logMemoryUsage();
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
     // Chunk the PDF
     console.log('[API] Chunking PDF...');
@@ -111,7 +76,6 @@ async function processSubmission(req: NextRequest) {
     for (const chunk of chunks) {
       console.log(`[API] Processing chunk for pages ${chunk.pages.join(', ')}...`);
 
-      // Use location info from chunk if available, otherwise use form data
       const chunkProjectDetails = {
         address: chunk.locationInfo?.address || address,
         parcelNumber: chunk.locationInfo?.parcelNumber || parcelNumber,
@@ -121,14 +85,11 @@ async function processSubmission(req: NextRequest) {
       };
 
       try {
-        // Send chunk to OpenAI for review
         const chunkReviewResult = await reviewArchitecturalPlan(chunk.base64, chunkProjectDetails);
 
-        // Combine results
         if (!combinedReviewResult) {
           combinedReviewResult = chunkReviewResult;
         } else {
-          // Merge findings
           combinedReviewResult.criticalFindings = [
             ...combinedReviewResult.criticalFindings,
             ...chunkReviewResult.criticalFindings
@@ -142,16 +103,11 @@ async function processSubmission(req: NextRequest) {
             ...chunkReviewResult.minorFindings
           ];
           combinedReviewResult.totalFindings += chunkReviewResult.totalFindings;
-
-          // Update compliance status
           combinedReviewResult.isCompliant = combinedReviewResult.isCompliant && chunkReviewResult.isCompliant;
-
-          // Combine summaries
           combinedReviewResult.summary = `${combinedReviewResult.summary}\n\nPages ${chunk.pages.join(', ')}:\n${chunkReviewResult.summary}`;
         }
       } catch (chunkError) {
         console.error(`[API] Error processing chunk for pages ${chunk.pages.join(', ')}:`, chunkError);
-        // Continue with other chunks even if one fails
         continue;
       }
     }
@@ -170,16 +126,15 @@ async function processSubmission(req: NextRequest) {
     await routeReviewResults(
       combinedReviewResult,
       buffer,
-      file.name,
+      new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
       submitterEmail,
       cityPlannerEmail
     );
 
-    return NextResponse.json({
-      success: true,
-      isCompliant: combinedReviewResult.isCompliant,
-      totalFindings: combinedReviewResult.totalFindings
-    });
+    // Clean up the Blob
+    await del(blobUrl);
+
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[API] Error processing submission:', error);
     return NextResponse.json(
@@ -190,25 +145,11 @@ async function processSubmission(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
-  const timeoutPromise = new Promise<Response>((_, reject) => {
-    setTimeout(() => {
-      console.error('[API] Request timed out after', TIMEOUT_MS / 1000, 'seconds');
-      reject(new Error('Request timed out. The file may be too large or the processing took too long. Please try with a smaller file or compress it before uploading.'));
-    }, TIMEOUT_MS);
+  // Process the submission asynchronously
+  processSubmission(req).catch(error => {
+    console.error('[API] Unhandled error in background processing:', error);
   });
 
-  try {
-    const result = await Promise.race([
-      processSubmission(req),
-      timeoutPromise
-    ]);
-    return result;
-  } catch (error) {
-    console.error('[API] Error processing submission:', error);
-    const status = error instanceof Error && error.message.includes('timed out') ? 504 : 500;
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to process submission' },
-      { status }
-    );
-  }
+  // Return immediately
+  return NextResponse.json({ success: true });
 }
