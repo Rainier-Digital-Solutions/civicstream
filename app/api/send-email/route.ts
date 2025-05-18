@@ -16,40 +16,48 @@ const emailConfig = {
     },
 };
 
-// Log email configuration (without sensitive data)
-console.log('[Email] Initializing with configuration:', {
-    host: emailConfig.host,
-    port: emailConfig.port,
-    secure: emailConfig.secure,
-    hasUser: !!emailConfig.auth.user,
-    hasPassword: !!emailConfig.auth.pass,
-    from: process.env.EMAIL_FROM || 'noreply@civicstream.com'
-});
-
-// Validate email configuration
-if (!emailConfig.auth.user || !emailConfig.auth.pass) {
-    console.error('[Email] Missing email configuration:', {
-        hasHost: !!emailConfig.host,
-        hasUser: !!emailConfig.auth.user,
-        hasPassword: !!emailConfig.auth.pass,
-        isSecure,
-        port: emailConfig.port
-    });
-}
-
 const transporter = nodemailer.createTransport(emailConfig);
-
-// Verify transporter configuration
-transporter.verify(function (error, success) {
-    if (error) {
-        console.error('[Email] Transporter verification failed:', error);
-    } else {
-        console.log('[Email] Transporter is ready to send messages');
-    }
-});
 
 export async function POST(req: NextRequest) {
     console.log('[Email] Received email request');
+
+    // Log email configuration (without sensitive data)
+    console.log('[Email] Current configuration:', {
+        host: emailConfig.host,
+        port: emailConfig.port,
+        secure: emailConfig.secure,
+        hasUser: !!emailConfig.auth.user,
+        hasPassword: !!emailConfig.auth.pass,
+        from: process.env.EMAIL_FROM || 'noreply@civicstream.com'
+    });
+
+    // Validate email configuration
+    if (!emailConfig.auth.user || !emailConfig.auth.pass) {
+        console.error('[Email] Missing email configuration:', {
+            hasHost: !!emailConfig.host,
+            hasUser: !!emailConfig.auth.user,
+            hasPassword: !!emailConfig.auth.pass,
+            isSecure,
+            port: emailConfig.port
+        });
+    }
+
+    // Verify transporter configuration
+    try {
+        await new Promise((resolve, reject) => {
+            transporter.verify(function (error, success) {
+                if (error) {
+                    console.error('[Email] Transporter verification failed:', error);
+                    reject(error);
+                } else {
+                    console.log('[Email] Transporter is ready to send messages');
+                    resolve(success);
+                }
+            });
+        });
+    } catch (error) {
+        console.error('[Email] Failed to verify transporter:', error);
+    }
 
     try {
         const body = await req.json();
