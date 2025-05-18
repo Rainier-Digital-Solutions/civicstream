@@ -192,7 +192,8 @@ async function processSubmission(req: NextRequest) {
 export async function POST(req: NextRequest): Promise<Response> {
   const timeoutPromise = new Promise<Response>((_, reject) => {
     setTimeout(() => {
-      reject(new Error('Request timeout'));
+      console.error('[API] Request timed out after', TIMEOUT_MS / 1000, 'seconds');
+      reject(new Error('Request timed out. The file may be too large or the processing took too long. Please try with a smaller file or compress it before uploading.'));
     }, TIMEOUT_MS);
   });
 
@@ -204,9 +205,10 @@ export async function POST(req: NextRequest): Promise<Response> {
     return result;
   } catch (error) {
     console.error('[API] Error processing submission:', error);
+    const status = error instanceof Error && error.message.includes('timed out') ? 504 : 500;
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to process submission' },
-      { status: 500 }
+      { status }
     );
   }
 }

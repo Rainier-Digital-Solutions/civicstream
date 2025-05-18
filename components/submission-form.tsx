@@ -150,6 +150,7 @@ export function SubmissionForm() {
       const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
+        signal: AbortSignal.timeout(5 * 60 * 1000), // 5 minute timeout
       });
 
       if (!response.ok) {
@@ -158,6 +159,8 @@ export function SubmissionForm() {
         // Handle specific error cases
         if (response.status === 413) {
           errorMessage = 'The file is too large. Please try a smaller file or compress it before uploading.';
+        } else if (response.status === 408 || response.status === 504) {
+          errorMessage = 'The request timed out. Please try again with a smaller file or compress it before uploading.';
         } else {
           try {
             const errorData = await response.json();
