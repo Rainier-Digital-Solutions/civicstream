@@ -15,6 +15,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Loader2, File, Upload, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
 
 const formSchema = z.object({
   submitterEmail: z.string().email('Please enter a valid email address'),
@@ -28,10 +29,19 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
+// Constants for chunking
+const MAX_CHUNK_SIZE = 4 * 1024 * 1024; // 4MB chunks to stay under 4.5MB limit
+
+// Generate a random ID for the file
+function generateFileId(): string {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
 export function SubmissionForm() {
   const [file, setFile] = useState<FileWithPreview | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'uploading' | 'processing' | 'success' | 'error'>('idle');
+  const [uploadProgress, setUploadProgress] = useState(0);
   const { toast } = useToast();
 
   const form = useForm<FormValues>({
@@ -108,6 +118,81 @@ export function SubmissionForm() {
     multiple: false,
   });
 
+  // Function to chunk a file and upload it
+  const uploadFileInChunks = async (file: File): Promise<string> => {
+    // Generate a unique ID for this file upload
+    const fileId = generateFileId();
+    const chunkSize = MAX_CHUNK_SIZE;
+    const fileSize = file.size;
+    const chunks = Math.ceil(fileSize / chunkSize);
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+
+    console.log(`Uploading file in ${chunks} chunks of ${chunkSize / (1024 * 1024)}MB each`);
+
+    // Upload each chunk
+    for (let i = 0; i < chunks; i++) {
+      const start = i * chunkSize;
+      const end = Math.min(fileSize, start + chunkSize);
+      const chunk = file.slice(start, end);
+
+      // Create a FormData for this chunk
+      const formData = new FormData();
+      formData.append('chunk', chunk);
+      formData.append('index', i.toString());
+      formData.append('total', chunks.toString());
+      formData.append('fileName', file.name);
+      formData.append('fileId', fileId);
+
+      try {
+        const response = await fetch(`${baseUrl}/api/upload`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || `Failed to upload chunk ${i}`);
+        }
+
+        // Update progress
+        setUploadProgress(Math.round(((i + 1) / chunks) * 80)); // 80% for chunk uploads
+
+        console.log(`Uploaded chunk ${i + 1}/${chunks}`);
+      } catch (error) {
+        console.error(`Error uploading chunk ${i}:`, error);
+        throw error;
+      }
+    }
+
+    // Request server to reassemble chunks
+    try {
+      const reassembleFormData = new FormData();
+      reassembleFormData.append('fileId', fileId);
+      reassembleFormData.append('action', 'reassemble');
+
+      setUploadProgress(85); // 85% for reassembly start
+
+      const response = await fetch(`${baseUrl}/api/upload`, {
+        method: 'POST',
+        body: reassembleFormData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to reassemble chunks');
+      }
+
+      setUploadProgress(95); // 95% for reassembly complete
+
+      const { url } = await response.json();
+      console.log('File reassembled successfully:', url);
+      return url;
+    } catch (error) {
+      console.error('Error reassembling chunks:', error);
+      throw error;
+    }
+  };
+
   const onSubmit = async (data: FormValues) => {
     if (!file) {
       toast({
@@ -120,24 +205,35 @@ export function SubmissionForm() {
 
     setIsSubmitting(true);
     setSubmissionStatus('uploading');
+    setUploadProgress(0);
 
     try {
-      // Upload the file directly
-      const formData = new FormData();
-      formData.append('file', file);
+      // Use chunked upload if file is larger than 4MB
+      let blobUrl;
+      if (file.size > MAX_CHUNK_SIZE) {
+        console.log(`File size (${(file.size / (1024 * 1024)).toFixed(2)}MB) exceeds ${MAX_CHUNK_SIZE / (1024 * 1024)}MB, using chunked upload`);
+        blobUrl = await uploadFileInChunks(file);
+      } else {
+        // Use regular upload for small files
+        console.log(`File size (${(file.size / (1024 * 1024)).toFixed(2)}MB) is under ${MAX_CHUNK_SIZE / (1024 * 1024)}MB, using regular upload`);
+        const formData = new FormData();
+        formData.append('file', file);
 
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
-      const uploadResponse = await fetch(`${baseUrl}/api/upload`, {
-        method: 'POST',
-        body: formData,
-      });
+        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+        const uploadResponse = await fetch(`${baseUrl}/api/upload`, {
+          method: 'POST',
+          body: formData,
+        });
 
-      if (!uploadResponse.ok) {
-        const errorData = await uploadResponse.json();
-        throw new Error(errorData.error || 'Failed to upload file');
+        if (!uploadResponse.ok) {
+          const errorData = await uploadResponse.json();
+          throw new Error(errorData.error || 'Failed to upload file');
+        }
+
+        const { url } = await uploadResponse.json();
+        blobUrl = url;
+        setUploadProgress(95);
       }
-
-      const { url: blobUrl } = await uploadResponse.json();
 
       if (!blobUrl) {
         throw new Error('Invalid upload response');
@@ -157,42 +253,40 @@ export function SubmissionForm() {
       }
 
       setSubmissionStatus('processing');
+      setUploadProgress(100);
 
-      // Fire and forget the processing request
-      fetch(`${baseUrl}/api/submit-plan`, {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+      const submitResponse = await fetch(`${baseUrl}/api/submit-plan`, {
         method: 'POST',
         body: submissionFormData,
-      }).catch(error => {
-        console.error('Error processing submission:', error);
-        // Don't show error to user since we're already showing success
       });
 
-      // Show success message immediately
+      if (!submitResponse.ok) {
+        const errorData = await submitResponse.json();
+        throw new Error(errorData.error || 'Failed to submit plan');
+      }
+
       setSubmissionStatus('success');
+
       toast({
-        title: "Plan submitted successfully",
-        description: "Your architectural plan has been uploaded and is being processed. You will receive an email with the review results shortly.",
+        title: 'Plan submitted successfully',
+        description: 'You will receive the results via email',
       });
 
       // Reset form
       form.reset();
-      if (file.preview) {
-        URL.revokeObjectURL(file.preview);
-      }
       setFile(null);
     } catch (error) {
       console.error('Error submitting plan:', error);
       setSubmissionStatus('error');
+
       toast({
-        variant: "destructive",
-        title: "Upload failed",
-        description: error instanceof Error ? error.message : "There was an error uploading your plan. Please try again.",
+        variant: 'destructive',
+        title: 'Failed to submit plan',
+        description: error instanceof Error ? error.message : 'An unknown error occurred',
       });
     } finally {
       setIsSubmitting(false);
-      setTimeout(() => {
-        setSubmissionStatus('idle');
-      }, 3000);
     }
   };
 
@@ -271,6 +365,20 @@ export function SubmissionForm() {
                     )}
                   </div>
                 </div>
+
+                {/* Upload progress bar */}
+                {isSubmitting && uploadProgress > 0 && (
+                  <div className="space-y-2">
+                    <Progress value={uploadProgress} />
+                    <p className="text-xs text-muted-foreground text-center">
+                      {uploadProgress < 95
+                        ? `Uploading: ${uploadProgress}%`
+                        : uploadProgress === 100
+                          ? 'Processing plan...'
+                          : 'Preparing submission...'}
+                    </p>
+                  </div>
+                )}
 
                 <div className="grid gap-6 sm:grid-cols-2">
                   <FormField
