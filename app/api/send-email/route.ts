@@ -3,6 +3,7 @@ import nodemailer from 'nodemailer';
 import { ReviewResult } from '@/lib/openai';
 // Use Node.js runtime for this route
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 // Email configuration
 const isSecure = process.env.EMAIL_SECURE === 'true';
