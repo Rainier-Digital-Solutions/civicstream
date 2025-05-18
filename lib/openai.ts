@@ -701,6 +701,10 @@ Please analyze the consolidated metadata from these architectural plans and use 
   throw lastError || new Error('Failed to process plan after all retry attempts');
 }
 
+/**
+ * @deprecated Use reviewPlanWithResponsesAPI instead which uses OpenAI's Responses API
+ * This function will be removed in a future release
+ */
 export async function reviewArchitecturalPlan(
   pdfBase64: string,
   projectDetails: {
