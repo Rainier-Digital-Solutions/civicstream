@@ -41,36 +41,36 @@ export async function POST(req: NextRequest) {
     console.log(`[API] Attempting to trigger background processing at: ${processPlanUrl}`);
 
     // Fire and forget - don't await this promise
-    fetch(processPlanUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        blobUrl,
-        submitterEmail,
-        cityPlannerEmail,
-        address,
-        parcelNumber,
-        city,
-        county,
-        projectSummary
-      }),
-    })
-      .then(response => {
-        // Log basic response info even for fire-and-forget for debugging
-        console.log(`[API] Background process trigger HTTP status: ${response.status}`);
-        if (!response.ok) {
-          response.text().then(text => {
-            console.error(`[API] Background process trigger failed with status ${response.status}: ${text}`);
-          }).catch(err => {
-            console.error(`[API] Background process trigger failed with status ${response.status}, and couldn't parse error text: ${err}`);
-          });
-        }
-      })
-      .catch(error => {
-        console.error(`[API] Error triggering background processing fetch for URL ${processPlanUrl}:`, error);
+    try {
+      console.log(`[API] DEBUG: Awaiting fetch to ${processPlanUrl}`);
+      const response = await fetch(processPlanUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          blobUrl,
+          submitterEmail,
+          cityPlannerEmail,
+          address,
+          parcelNumber,
+          city,
+          county,
+          projectSummary
+        }),
       });
+      console.log(`[API] DEBUG: Fetch awaited. Background process trigger HTTP status: ${response.status}`);
+      if (!response.ok) {
+        const text = await response.text();
+        console.error(`[API] DEBUG: Background process trigger failed with status ${response.status}: ${text}`);
+      } else {
+        // You could even try to get response.json() if process-plan is supposed to return one
+        const jsonResponse = await response.json();
+        console.log(`[API] DEBUG: Background process trigger successful, response:`, jsonResponse);
+      }
+    } catch (error) {
+      console.error(`[API] DEBUG: Error awaiting background processing fetch for URL ${processPlanUrl}:`, error);
+    }
 
     console.log('[API] Submission accepted and background processing started (fetch initiated).');
 
