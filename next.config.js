@@ -5,11 +5,6 @@ module.exports = {
     ignoreDuringBuilds: true,
   },
   images: { unoptimized: true },
-  // Enable SWC and disable Babel
-  swcMinify: true,
-  experimental: {
-    forceSwcTransforms: true,
-  },
   webpack: (config, { isServer }) => {
     config.experiments = {
       asyncWebAssembly: true,
