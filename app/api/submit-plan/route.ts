@@ -61,6 +61,7 @@ async function processSubmission(req: NextRequest) {
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
+      console.log('[API] Starting fetch request...');
       const response = await fetch(blobUrl, {
         signal: controller.signal
       });
@@ -70,8 +71,17 @@ async function processSubmission(req: NextRequest) {
         throw new Error(`Failed to fetch file from Blob: ${response.statusText}`);
       }
 
+      console.log('[API] Fetch successful, getting content length...');
+      const contentLength = response.headers.get('content-length');
+      console.log('[API] Content length:', contentLength ? `${Math.round(parseInt(contentLength) / 1024 / 1024)}MB` : 'unknown');
+
+      console.log('[API] Converting to array buffer...');
       const arrayBuffer = await response.arrayBuffer();
+      console.log('[API] Array buffer size:', `${Math.round(arrayBuffer.byteLength / 1024 / 1024)}MB`);
+
+      console.log('[API] Converting to Buffer...');
       const buffer = Buffer.from(arrayBuffer);
+      console.log('[API] Buffer size:', `${Math.round(buffer.length / 1024 / 1024)}MB`);
 
       // Chunk the PDF
       console.log('[API] Chunking PDF...');
