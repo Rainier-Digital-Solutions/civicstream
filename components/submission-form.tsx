@@ -154,17 +154,21 @@ export function SubmissionForm() {
 
       if (!response.ok) {
         let errorMessage = 'Failed to submit plan';
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.error || errorMessage;
-        } catch (e) {
-          // If response is not JSON, try to get text
+
+        // Handle specific error cases
+        if (response.status === 413) {
+          errorMessage = 'The file is too large. Please try a smaller file or compress it before uploading.';
+        } else {
           try {
-            const text = await response.text();
-            errorMessage = text || errorMessage;
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorMessage;
           } catch (e) {
-            // If we can't get text either, use the status text
-            errorMessage = response.statusText || errorMessage;
+            try {
+              const text = await response.text();
+              errorMessage = text || errorMessage;
+            } catch (e) {
+              errorMessage = response.statusText || errorMessage;
+            }
           }
         }
 
