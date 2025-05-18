@@ -19,7 +19,32 @@ const emailConfig = {
 };
 
 const transporter = nodemailer.createTransport(emailConfig);
-console.log('[Email] Transporter created:', transporter);
+
+// Add detailed logging for email configuration
+console.log('[Email] Email configuration:', {
+    host: emailConfig.host,
+    port: emailConfig.port,
+    secure: emailConfig.secure,
+    auth: {
+        user: emailConfig.auth.user,
+        hasPassword: !!emailConfig.auth.pass,
+        passwordLength: emailConfig.auth.pass?.length
+    }
+});
+
+// Verify transporter configuration immediately
+transporter.verify(function (error, success) {
+    if (error) {
+        console.error('[Email] Initial transporter verification failed:', {
+            error: error.message,
+            code: (error as any).code,
+            command: (error as any).command
+        });
+    } else {
+        console.log('[Email] Initial transporter verification successful');
+    }
+});
+
 export async function POST(req: NextRequest) {
     console.log('[Email] Received email request');
 
