@@ -144,13 +144,29 @@ async function processSubmission(req: NextRequest) {
       });
 
       if (!emailResponse.ok) {
-        const errorData = await emailResponse.json();
-        console.error('[API] Email sending failed:', {
-          status: emailResponse.status,
-          statusText: emailResponse.statusText,
-          error: errorData.error
-        });
-        throw new Error(`Failed to send email: ${errorData.error || emailResponse.statusText}`);
+        let errorMessage = emailResponse.statusText;
+        try {
+          const errorData = await emailResponse.json();
+          console.error('[API] Email sending failed:', {
+            status: emailResponse.status,
+            statusText: emailResponse.statusText,
+            error: errorData.error
+          });
+          errorMessage = errorData.error || errorMessage;
+        } catch (parseError) {
+          // If response is not JSON, try to get text
+          try {
+            const text = await emailResponse.text();
+            console.error('[API] Email sending failed with non-JSON response:', {
+              status: emailResponse.status,
+              statusText: emailResponse.statusText,
+              responseText: text.substring(0, 200) // Log first 200 chrs to avoid huge logs
+            });
+          } catch (textError) {
+            console.error('[API] Could not read error response:', textError);
+          }
+        }
+        throw new Error(`Failed to send email: ${errorMessage}`);
       }
 
       // Clean up the Blob

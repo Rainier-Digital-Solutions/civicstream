@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { ReviewResult } from '@/lib/openai';
-
 // Use Node.js runtime for this route
 export const runtime = 'nodejs';
 
@@ -16,6 +15,16 @@ const emailConfig = {
         pass: process.env.EMAIL_PASSWORD || '',
     },
 };
+
+// Log email configuration (without sensitive data)
+console.log('[Email] Initializing with configuration:', {
+    host: emailConfig.host,
+    port: emailConfig.port,
+    secure: emailConfig.secure,
+    hasUser: !!emailConfig.auth.user,
+    hasPassword: !!emailConfig.auth.pass,
+    from: process.env.EMAIL_FROM || 'noreply@civicstream.com'
+});
 
 // Validate email configuration
 if (!emailConfig.auth.user || !emailConfig.auth.pass) {
