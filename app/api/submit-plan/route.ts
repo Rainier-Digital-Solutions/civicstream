@@ -67,53 +67,28 @@ async function processSubmission(req: NextRequest) {
 
       let buffer: Buffer;
 
-      if (process.env.VERCEL_ENV === 'preview') {
-        console.log('[API] Using direct fetch in preview environment with modified headers');
-        const response = await fetch(blobUrl, {
-          signal: controller.signal,
-          headers: {
-            'Accept': 'application/pdf',
-            'Cache-Control': 'no-cache',
-            'Authorization': `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`
-          }
+      // Remove the environment check and use the same fetch configuration everywhere
+      const response = await fetch(blobUrl, {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/pdf',
+          'Cache-Control': 'no-cache'
+        },
+        credentials: 'same-origin'
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.error('[API] Fetch failed:', {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers.entries())
         });
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          console.error('[API] Fetch failed:', {
-            status: response.status,
-            statusText: response.statusText,
-            headers: Object.fromEntries(response.headers.entries())
-          });
-          throw new Error(`Failed to fetch file from Blob: ${response.status} ${response.statusText}`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        buffer = Buffer.from(arrayBuffer);
-      } else {
-        // Use fetch for development and production
-        const response = await fetch(blobUrl, {
-          signal: controller.signal,
-          headers: {
-            'Accept': 'application/pdf',
-            'Cache-Control': 'no-cache'
-          },
-          credentials: 'same-origin'
-        });
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          console.error('[API] Fetch failed:', {
-            status: response.status,
-            statusText: response.statusText,
-            headers: Object.fromEntries(response.headers.entries())
-          });
-          throw new Error(`Failed to fetch file from Blob: ${response.status} ${response.statusText}`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        buffer = Buffer.from(arrayBuffer);
+        throw new Error(`Failed to fetch file from Blob: ${response.status} ${response.statusText}`);
       }
+
+      const arrayBuffer = await response.arrayBuffer();
+      buffer = Buffer.from(arrayBuffer);
 
       console.log('[API] Buffer size:', `${Math.round(buffer.length / 1024 / 1024)}MB`);
 
