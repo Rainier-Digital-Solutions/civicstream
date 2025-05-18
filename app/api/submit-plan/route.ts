@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { reviewArchitecturalPlan } from '@/lib/openai';
 import { routeReviewResults } from '@/lib/email';
 import { chunkPDF } from '@/lib/pdf-utils';
-import { del, list } from '@vercel/blob';
+import { del, list, put } from '@vercel/blob';
+import * as vercelBlob from '@vercel/blob';
 
 export const dynamic = 'force-dynamic';
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -67,7 +68,6 @@ async function processSubmission(req: NextRequest) {
 
       let buffer: Buffer;
 
-      // Remove the environment check and use the same fetch configuration everywhere
       const response = await fetch(blobUrl, {
         signal: controller.signal,
         headers: {
@@ -87,8 +87,19 @@ async function processSubmission(req: NextRequest) {
         throw new Error(`Failed to fetch file from Blob: ${response.status} ${response.statusText}`);
       }
 
+      // Check content type
+      const contentType = response.headers.get('content-type');
+      if (!contentType?.includes('application/pdf')) {
+        console.error('[API] Invalid content type:', contentType);
+        throw new Error('Invalid content type: Expected PDF file');
+      }
+
       const arrayBuffer = await response.arrayBuffer();
       buffer = Buffer.from(arrayBuffer);
+
+      if (buffer.length === 0) {
+        throw new Error('Received empty file from Blob');
+      }
 
       console.log('[API] Buffer size:', `${Math.round(buffer.length / 1024 / 1024)}MB`);
 
@@ -160,7 +171,15 @@ async function processSubmission(req: NextRequest) {
       );
 
       // Clean up the Blob
-      await del(blobUrl);
+      try {
+        await del(blobUrl);
+      } catch (error) {
+        if (error instanceof vercelBlob.BlobRequestAbortedError) {
+          console.error('[API] Blob deletion was aborted');
+        } else {
+          console.error('[API] Error deleting blob:', error);
+        }
+      }
 
       return NextResponse.json({ success: true });
     } catch (error) {
