@@ -116,6 +116,13 @@ async function processSubmission(req: NextRequest) {
 
       // Send email using the new email endpoint
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+      console.log('[API] Attempting to send email:', {
+        baseUrl,
+        submitterEmail,
+        cityPlannerEmail,
+        isCompliant: combinedResult.isCompliant
+      });
+
       const emailResponse = await fetch(`${baseUrl}/api/send-email`, {
         method: 'POST',
         headers: {
@@ -130,8 +137,20 @@ async function processSubmission(req: NextRequest) {
         }),
       });
 
+      console.log('[API] Email response received:', {
+        status: emailResponse.status,
+        statusText: emailResponse.statusText,
+        ok: emailResponse.ok
+      });
+
       if (!emailResponse.ok) {
-        throw new Error('Failed to send email');
+        const errorData = await emailResponse.json();
+        console.error('[API] Email sending failed:', {
+          status: emailResponse.status,
+          statusText: emailResponse.statusText,
+          error: errorData.error
+        });
+        throw new Error(`Failed to send email: ${errorData.error || emailResponse.statusText}`);
       }
 
       // Clean up the Blob
