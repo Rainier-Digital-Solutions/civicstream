@@ -1,5 +1,6 @@
 import { Building2 } from 'lucide-react';
 import Link from 'next/link';
+import { CivicStreamLogo } from './CivicStreamLogo';
 
 export function Footer() {
   return (
@@ -8,7 +9,7 @@ export function Footer() {
         <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-4">
             <div className="flex items-center space-x-2">
-              <Building2 className="h-6 w-6 text-primary" />
+              <CivicStreamLogo className="h-6 w-6 text-primary" />
               <span className="text-lg font-semibold">CivicStream</span>
             </div>
             <p className="text-sm text-muted-foreground max-w-[250px]">
