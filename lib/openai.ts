@@ -198,7 +198,7 @@ Please analyze these plans and use the web_search tool to find applicable buildi
 
       console.log(`[OpenAI] Attempt ${attempts + 1}/${maxRetries}: Sending initial request to OpenAI`);
       const response = await openai.chat.completions.create({
-        model: "gpt-4-vision-preview",
+        model: "gpt-4o",
         messages: baseMessages,
         tools,
         tool_choice: "auto",
