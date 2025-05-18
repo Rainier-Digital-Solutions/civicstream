@@ -18,12 +18,15 @@ const BATCH_SIZE = 5;
 const MAX_SINGLE_REQUEST_SIZE = 2000000; // Maximum size in bytes for single request (~2MB)
 
 export async function POST(req: NextRequest) {
+    console.log('[ProcessPlan] Received submission request');
+
     // Start the processing in the background without awaiting
     processSubmission(req).catch((error) => {
         console.error('[ProcessPlan] Unhandled error in background processing:', error);
     });
 
     // Return success immediately to the client
+    console.log('[ProcessPlan] Returning success response to client, background processing started');
     return NextResponse.json({ success: true });
 }
 
@@ -31,7 +34,10 @@ async function processSubmission(req: NextRequest) {
     console.log('[ProcessPlan] Starting background plan processing');
 
     try {
+        console.log('[ProcessPlan] Parsing request body');
         const body = await req.json();
+        console.log('[ProcessPlan] Request body parsed successfully');
+
         const {
             blobUrl,
             submitterEmail,
@@ -43,6 +49,19 @@ async function processSubmission(req: NextRequest) {
             projectSummary
         } = body;
 
+        // Log the request parameters (without any sensitive information)
+        console.log('[ProcessPlan] Request parameters:', {
+            hasBlobUrl: !!blobUrl,
+            blobUrlLength: blobUrl ? blobUrl.length : 0,
+            hasSubmitterEmail: !!submitterEmail,
+            hasCityPlannerEmail: !!cityPlannerEmail,
+            hasAddress: !!address,
+            hasParcelNumber: !!parcelNumber,
+            hasCity: !!city,
+            hasCounty: !!county,
+            hasProjectSummary: !!projectSummary
+        });
+
         if (!blobUrl) {
             console.error('[ProcessPlan] Missing blobUrl');
             return;
@@ -53,21 +72,32 @@ async function processSubmission(req: NextRequest) {
             return;
         }
 
+        // Check if OpenAI API key is configured
+        if (!process.env.OPENAI_API_KEY) {
+            console.error('[ProcessPlan] OPENAI_API_KEY is not configured in environment variables');
+        } else {
+            console.log('[ProcessPlan] OPENAI_API_KEY is configured (length:', process.env.OPENAI_API_KEY.length, ')');
+        }
+
         // Fetch the file from Blob
-        console.log('[ProcessPlan] Fetching file from Blob:', blobUrl);
+        console.log('[ProcessPlan] Fetching file from Blob:', blobUrl.substring(0, 50) + '...');
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
         try {
+            console.log('[ProcessPlan] Starting fetch request');
             const response = await fetch(blobUrl, {
                 signal: controller.signal,
             });
+            console.log('[ProcessPlan] Fetch response received, status:', response.status);
 
             if (!response.ok) {
                 throw new Error(`Failed to fetch blob: ${response.statusText}`);
             }
 
+            console.log('[ProcessPlan] Reading response buffer');
             const buffer = await response.arrayBuffer();
+            console.log('[ProcessPlan] Response buffer read successfully, size:', buffer.byteLength, 'bytes');
             clearTimeout(timeoutId);
 
             const projectDetails = {
@@ -87,14 +117,25 @@ async function processSubmission(req: NextRequest) {
                 const fileName = new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf';
 
                 try {
+                    console.log('[ProcessPlan] Starting PDF review with Responses API, file size:', pdfBuffer.length, 'bytes, filename:', fileName);
+
+                    // Add a timeout for the Responses API call
+                    const responseApiTimeout = setTimeout(() => {
+                        console.error('[ProcessPlan] WARNING: Responses API call taking longer than expected (30 seconds)');
+                    }, 30000);
+
                     // Use the new Responses API implementation
                     reviewResult = await reviewPlanWithResponsesAPI(pdfBuffer, fileName, projectDetails);
+
+                    clearTimeout(responseApiTimeout);
                     console.log('[ProcessPlan] Full PDF review completed with Responses API:', {
                         isCompliant: reviewResult.isCompliant,
-                        totalFindings: reviewResult.totalFindings
+                        totalFindings: reviewResult.totalFindings,
+                        hasEmailBody: !!reviewResult.submitterEmailBody
                     });
                 } catch (error) {
                     console.error('[ProcessPlan] Error processing full PDF with Responses API:', error);
+                    console.error('[ProcessPlan] Error details:', error instanceof Error ? error.stack : 'No stack trace available');
 
                     // Fall back to the old implementation if the Responses API fails
                     console.log('[ProcessPlan] Falling back to legacy implementation');
@@ -168,53 +209,69 @@ async function processSubmission(req: NextRequest) {
             }
 
             // Send email using the email endpoint
+            console.log('[ProcessPlan] Preparing to send email');
+
             const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+            console.log('[ProcessPlan] Email endpoint URL:', `${baseUrl}/api/send-email`);
+
+            // Check email content validity before sending
+            if (!reviewResult.submitterEmailBody || !reviewResult.cityPlannerEmailBody) {
+                console.error('[ProcessPlan] WARNING: Email bodies are missing or empty');
+            }
+
             console.log('[ProcessPlan] Attempting to send email:', {
                 baseUrl,
                 submitterEmail,
                 cityPlannerEmail,
-                isCompliant: reviewResult.isCompliant
+                isCompliant: reviewResult.isCompliant,
+                hasReviewResult: !!reviewResult,
+                hasEmailBodies: !!(reviewResult.submitterEmailBody && reviewResult.cityPlannerEmailBody)
             });
 
-            const emailResponse = await fetch(`${baseUrl}/api/send-email`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    reviewResult,
-                    blobUrl: blobUrl,
-                    fileName: new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
-                    submitterEmail,
-                    cityPlannerEmail,
-                }),
-            });
+            try {
+                const emailResponse = await fetch(`${baseUrl}/api/send-email`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        reviewResult,
+                        blobUrl: blobUrl,
+                        fileName: new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
+                        submitterEmail,
+                        cityPlannerEmail,
+                    }),
+                });
 
-            console.log('[ProcessPlan] Email response received:', {
-                status: emailResponse.status,
-                statusText: emailResponse.statusText,
-                ok: emailResponse.ok
-            });
+                console.log('[ProcessPlan] Email API responded with status:', emailResponse.status);
 
-            if (!emailResponse.ok) {
-                let errorMessage = emailResponse.statusText;
-                try {
-                    const errorData = await emailResponse.json();
-                    console.error('[ProcessPlan] Email sending failed:', {
-                        status: emailResponse.status,
-                        statusText: emailResponse.statusText,
-                        error: errorData.error
-                    });
-                    errorMessage = errorData.error || errorMessage;
-                } catch (parseError) {
-                    console.error('[ProcessPlan] Could not parse error response:', parseError);
+                if (!emailResponse.ok) {
+                    let errorMessage = emailResponse.statusText;
+                    try {
+                        const errorData = await emailResponse.json();
+                        console.error('[ProcessPlan] Email sending failed:', {
+                            status: emailResponse.status,
+                            statusText: emailResponse.statusText,
+                            error: errorData.error
+                        });
+                        errorMessage = errorData.error || errorMessage;
+                    } catch (parseError) {
+                        console.error('[ProcessPlan] Could not parse error response:', parseError);
+                    }
+                    throw new Error(`Failed to send email: ${errorMessage}`);
                 }
-                throw new Error(`Failed to send email: ${errorMessage}`);
+
+                console.log('[ProcessPlan] Email sent successfully');
+            } catch (emailError) {
+                console.error('[ProcessPlan] Error sending email:', emailError);
+                console.error('[ProcessPlan] Email error details:', emailError instanceof Error ? emailError.stack : 'No stack trace available');
+                throw new Error('Failed to send email: ' + (emailError instanceof Error ? emailError.message : 'Unknown error'));
             }
 
             // Clean up the Blob
             try {
                 await del(blobUrl);
+                console.log('[ProcessPlan] Blob successfully deleted from storage');
             } catch (error) {
                 if (error instanceof vercelBlob.BlobRequestAbortedError) {
                     console.error('[ProcessPlan] Blob deletion was aborted');
