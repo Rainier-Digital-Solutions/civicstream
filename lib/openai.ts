@@ -169,7 +169,7 @@ City: ${projectDetails.city}
 County: ${projectDetails.county}
 ${projectDetails.projectSummary ? `Project Summary: ${projectDetails.projectSummary}` : ''}
 
-[PDR Architectural Plan - Base64 Length: ${pdfBase64.length}]
+[PDF Architectural Plan - Base64 Length: ${pdfBase64.length}]
 
 Please analyze these plans and use the web_search tool to find applicable building codes and regulations for this location.`,
         },
@@ -195,12 +195,13 @@ Please analyze these plans and use the web_search tool to find applicable buildi
         }
       ];
 
-      console.log(`[OpenAI] Attempt ${attempts + 1}/${maxRetries}: Sending request to OpenAI`);
+      console.log(`[OpenAI] Attempt ${attempts + 1}/${maxRetries}: Sending initial request to OpenAI`);
       const response = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: baseMessages,
         tools,
         tool_choice: "auto",
+        stream: false
       });
 
       console.log('[OpenAI] Received response from OpenAI');
@@ -221,7 +222,7 @@ Please analyze these plans and use the web_search tool to find applicable buildi
           console.log('[OpenAI] Web search query:', args.search_query);
 
           const searchResults = await performWebSearch(args.search_query, 5);
-          console.log('[OpenAI] SerpAPI search returned', searchResults.length, 'results for query:', args.search_query);
+          console.log('[OpenAI] Web search returned', searchResults.length, 'results');
 
           toolResponses.push({
             role: "tool",
@@ -234,7 +235,8 @@ Please analyze these plans and use the web_search tool to find applicable buildi
         }
       }
 
-      const secondResponse = await openai.chat.completions.create({
+      // Create a streaming response for the final analysis
+      const stream = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
           ...baseMessages,
@@ -245,13 +247,19 @@ Please analyze these plans and use the web_search tool to find applicable buildi
             content: "Please analyze the architectural plans using the building codes and regulations found in the search results. Compare the plans against these codes to identify any compliance issues. Provide a detailed review following the required JSON format."
           }
         ],
+        stream: true
       });
 
-      const planReviewText = secondResponse.choices[0].message.content || "";
-      console.log('[OpenAI] Raw response length:', planReviewText.length);
+      let fullResponse = '';
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        fullResponse += content;
+      }
+
+      console.log('[OpenAI] Raw response length:', fullResponse.length);
 
       try {
-        const result = JSON.parse(planReviewText);
+        const result = JSON.parse(fullResponse);
         console.log('[OpenAI] Successfully parsed JSON response');
 
         // Enhanced validation of the response structure
@@ -286,7 +294,7 @@ Please analyze these plans and use the web_search tool to find applicable buildi
         };
       } catch (parseError) {
         console.error(`[OpenAI] Attempt ${attempts + 1} failed to parse JSON:`, parseError);
-        console.error('[OpenAI] Raw response that failed to parse:', planReviewText);
+        console.error('[OpenAI] Raw response that failed to parse:', fullResponse);
         lastError = parseError instanceof Error ? parseError : new Error('Failed to parse AI response as JSON');
 
         if (attempts === maxRetries - 1) {

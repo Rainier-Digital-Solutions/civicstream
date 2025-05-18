@@ -4,25 +4,17 @@ import { routeReviewResults } from '@/lib/email';
 import { chunkPDF } from '@/lib/pdf-utils';
 
 export const dynamic = 'force-dynamic';
-export const config = {
-  api: {
-    bodyParser: false,
-    responseLimit: false,
-  },
-};
+const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-const TIMEOUT_MS = 300000; // 5 minutes
-
-// Memory usage logging utility
-const logMemoryUsage = () => {
+function logMemoryUsage() {
   const used = process.memoryUsage();
   console.log('[API] Memory usage:', {
     rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
     heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`,
     heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
-    external: `${Math.round(used.external / 1024 / 1024)}MB`
+    external: `${Math.round(used.external / 1024 / 1024)}MB`,
   });
-};
+}
 
 async function processSubmission(req: NextRequest) {
   console.log('[API] Received plan submission request');
@@ -57,7 +49,7 @@ async function processSubmission(req: NextRequest) {
     const projectSummary = formData.get('projectSummary') as string | null;
 
     if (!file || !submitterEmail || !cityPlannerEmail || !address || !parcelNumber || !city || !county) {
-      console.error('Missing required fields:', {
+      console.error('[API] Missing required fields:', {
         file: !!file,
         submitterEmail,
         cityPlannerEmail,
@@ -85,7 +77,7 @@ async function processSubmission(req: NextRequest) {
       );
     }
 
-    console.log('Processing submission:', {
+    console.log('[API] Processing submission:', {
       fileName: file.name,
       fileSize: file.size,
       fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
@@ -103,57 +95,66 @@ async function processSubmission(req: NextRequest) {
     logMemoryUsage();
 
     // Chunk the PDF
-    console.log('Chunking PDF...');
+    console.log('[API] Chunking PDF...');
     const chunks = await chunkPDF(buffer);
-    console.log(`PDF chunked into ${chunks.length} parts`);
+    console.log(`[API] PDF chunked into ${chunks.length} parts`);
     logMemoryUsage();
 
     // Process each chunk and combine results
     let combinedReviewResult = null;
     for (const chunk of chunks) {
-      console.log(`Processing chunk for pages ${chunk.pages.join(', ')}...`);
+      console.log(`[API] Processing chunk for pages ${chunk.pages.join(', ')}...`);
 
-      // Send chunk to OpenAI for review
-      const chunkReviewResult = await reviewArchitecturalPlan(chunk.base64, {
-        address,
-        parcelNumber,
+      // Use location info from chunk if available, otherwise use form data
+      const chunkProjectDetails = {
+        address: chunk.locationInfo?.address || address,
+        parcelNumber: chunk.locationInfo?.parcelNumber || parcelNumber,
         city,
         county,
         projectSummary: projectSummary || undefined
-      });
+      };
 
-      // Combine results
-      if (!combinedReviewResult) {
-        combinedReviewResult = chunkReviewResult;
-      } else {
-        // Merge findings
-        combinedReviewResult.criticalFindings = [
-          ...combinedReviewResult.criticalFindings,
-          ...chunkReviewResult.criticalFindings
-        ];
-        combinedReviewResult.majorFindings = [
-          ...combinedReviewResult.majorFindings,
-          ...chunkReviewResult.majorFindings
-        ];
-        combinedReviewResult.minorFindings = [
-          ...combinedReviewResult.minorFindings,
-          ...chunkReviewResult.minorFindings
-        ];
-        combinedReviewResult.totalFindings += chunkReviewResult.totalFindings;
+      try {
+        // Send chunk to OpenAI for review
+        const chunkReviewResult = await reviewArchitecturalPlan(chunk.base64, chunkProjectDetails);
 
-        // Update compliance status
-        combinedReviewResult.isCompliant = combinedReviewResult.isCompliant && chunkReviewResult.isCompliant;
+        // Combine results
+        if (!combinedReviewResult) {
+          combinedReviewResult = chunkReviewResult;
+        } else {
+          // Merge findings
+          combinedReviewResult.criticalFindings = [
+            ...combinedReviewResult.criticalFindings,
+            ...chunkReviewResult.criticalFindings
+          ];
+          combinedReviewResult.majorFindings = [
+            ...combinedReviewResult.majorFindings,
+            ...chunkReviewResult.majorFindings
+          ];
+          combinedReviewResult.minorFindings = [
+            ...combinedReviewResult.minorFindings,
+            ...chunkReviewResult.minorFindings
+          ];
+          combinedReviewResult.totalFindings += chunkReviewResult.totalFindings;
 
-        // Combine summaries
-        combinedReviewResult.summary = `${combinedReviewResult.summary}\n\nPages ${chunk.pages.join(', ')}:\n${chunkReviewResult.summary}`;
+          // Update compliance status
+          combinedReviewResult.isCompliant = combinedReviewResult.isCompliant && chunkReviewResult.isCompliant;
+
+          // Combine summaries
+          combinedReviewResult.summary = `${combinedReviewResult.summary}\n\nPages ${chunk.pages.join(', ')}:\n${chunkReviewResult.summary}`;
+        }
+      } catch (chunkError) {
+        console.error(`[API] Error processing chunk for pages ${chunk.pages.join(', ')}:`, chunkError);
+        // Continue with other chunks even if one fails
+        continue;
       }
     }
 
     if (!combinedReviewResult) {
-      throw new Error('Failed to process PDF chunks');
+      throw new Error('Failed to process any PDF chunks');
     }
 
-    console.log('Review completed:', {
+    console.log('[API] Review completed:', {
       isCompliant: combinedReviewResult.isCompliant,
       totalFindings: combinedReviewResult.totalFindings
     });
@@ -174,9 +175,9 @@ async function processSubmission(req: NextRequest) {
       totalFindings: combinedReviewResult.totalFindings
     });
   } catch (error) {
-    console.error('Error processing plan submission:', error);
+    console.error('[API] Error processing submission:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to process submission' },
+      { error: 'Failed to process submission: ' + (error instanceof Error ? error.message : 'Unknown error') },
       { status: 500 }
     );
   }
