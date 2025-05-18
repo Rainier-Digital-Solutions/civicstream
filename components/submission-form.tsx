@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -90,6 +90,15 @@ export function SubmissionForm() {
     }
   }, [toast]);
 
+  // Cleanup preview URL when file is removed
+  useEffect(() => {
+    return () => {
+      if (file?.preview) {
+        URL.revokeObjectURL(file.preview);
+      }
+    };
+  }, [file]);
+
   const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
     onDrop,
     accept: {
@@ -113,43 +122,51 @@ export function SubmissionForm() {
     setSubmissionStatus('uploading');
 
     try {
-      // Step 1: Get upload URL
-      const urlResponse = await fetch('/api/get-upload-url', {
-        method: 'POST',
-        body: JSON.stringify({
-          filename: file.name,
-          contentType: file.type,
-        }),
-      });
-      const { url, blobUrl } = await urlResponse.json();
-
-      // Step 2: Upload directly to Blob
-      await fetch(url, {
-        method: 'PUT',
-        body: file,
-      });
-
-      // Step 3: Submit form data with blob URL
+      // Upload the file directly
       const formData = new FormData();
-      formData.append('blobUrl', blobUrl);
-      formData.append('submitterEmail', data.submitterEmail);
-      formData.append('cityPlannerEmail', data.cityPlannerEmail);
-      formData.append('address', data.address);
-      formData.append('parcelNumber', data.parcelNumber);
-      formData.append('city', data.city);
-      formData.append('county', data.county);
-      if (data.projectSummary) {
-        formData.append('projectSummary', data.projectSummary);
-      }
+      formData.append('file', file);
 
-      // Fire and forget the processing request
-      fetch('/api/submit-plan', {
+      const uploadResponse = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
-      }).catch(error => {
-        console.error('Error in background processing:', error);
-        // Send error notification to admin or monitoring service
       });
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json();
+        throw new Error(errorData.error || 'Failed to upload file');
+      }
+
+      const { url: blobUrl } = await uploadResponse.json();
+
+      if (!blobUrl) {
+        throw new Error('Invalid upload response');
+      }
+
+      // Submit form data with blob URL
+      const submissionFormData = new FormData();
+      submissionFormData.append('blobUrl', blobUrl);
+      submissionFormData.append('submitterEmail', data.submitterEmail);
+      submissionFormData.append('cityPlannerEmail', data.cityPlannerEmail);
+      submissionFormData.append('address', data.address);
+      submissionFormData.append('parcelNumber', data.parcelNumber);
+      submissionFormData.append('city', data.city);
+      submissionFormData.append('county', data.county);
+      if (data.projectSummary) {
+        submissionFormData.append('projectSummary', data.projectSummary);
+      }
+
+      setSubmissionStatus('processing');
+
+      // Fire and forget the processing request
+      const processResponse = await fetch('/api/submit-plan', {
+        method: 'POST',
+        body: submissionFormData,
+      });
+
+      if (!processResponse.ok) {
+        const errorData = await processResponse.json();
+        throw new Error(errorData.error || 'Failed to process submission');
+      }
 
       // Show success message immediately
       setSubmissionStatus('success');
@@ -160,6 +177,9 @@ export function SubmissionForm() {
 
       // Reset form
       form.reset();
+      if (file.preview) {
+        URL.revokeObjectURL(file.preview);
+      }
       setFile(null);
     } catch (error) {
       console.error('Error submitting plan:', error);

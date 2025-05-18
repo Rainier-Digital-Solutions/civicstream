@@ -71,70 +71,47 @@ async function processSubmission(req: NextRequest) {
     console.log(`[API] PDF chunked into ${chunks.length} parts`);
     logMemoryUsage();
 
-    // Process each chunk and combine results
-    let combinedReviewResult = null;
-    for (const chunk of chunks) {
-      console.log(`[API] Processing chunk for pages ${chunk.pages.join(', ')}...`);
+    // Combine all chunks into a single review request
+    console.log('[API] Combining chunks for single review...');
+    const combinedBase64 = chunks.map(chunk => chunk.base64).join('\n\n');
 
-      const chunkProjectDetails = {
-        address: chunk.locationInfo?.address || address,
-        parcelNumber: chunk.locationInfo?.parcelNumber || parcelNumber,
-        city,
-        county,
-        projectSummary: projectSummary || undefined
-      };
+    const projectDetails = {
+      address,
+      parcelNumber,
+      city,
+      county,
+      projectSummary: projectSummary || undefined
+    };
 
-      try {
-        const chunkReviewResult = await reviewArchitecturalPlan(chunk.base64, chunkProjectDetails);
+    try {
+      const reviewResult = await reviewArchitecturalPlan(combinedBase64, projectDetails);
 
-        if (!combinedReviewResult) {
-          combinedReviewResult = chunkReviewResult;
-        } else {
-          combinedReviewResult.criticalFindings = [
-            ...combinedReviewResult.criticalFindings,
-            ...chunkReviewResult.criticalFindings
-          ];
-          combinedReviewResult.majorFindings = [
-            ...combinedReviewResult.majorFindings,
-            ...chunkReviewResult.majorFindings
-          ];
-          combinedReviewResult.minorFindings = [
-            ...combinedReviewResult.minorFindings,
-            ...chunkReviewResult.minorFindings
-          ];
-          combinedReviewResult.totalFindings += chunkReviewResult.totalFindings;
-          combinedReviewResult.isCompliant = combinedReviewResult.isCompliant && chunkReviewResult.isCompliant;
-          combinedReviewResult.summary = `${combinedReviewResult.summary}\n\nPages ${chunk.pages.join(', ')}:\n${chunkReviewResult.summary}`;
-        }
-      } catch (chunkError) {
-        console.error(`[API] Error processing chunk for pages ${chunk.pages.join(', ')}:`, chunkError);
-        continue;
-      }
+      console.log('[API] Review completed:', {
+        isCompliant: reviewResult.isCompliant,
+        totalFindings: reviewResult.totalFindings
+      });
+      logMemoryUsage();
+
+      // Route the email based on the review results
+      await routeReviewResults(
+        reviewResult,
+        buffer,
+        new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
+        submitterEmail,
+        cityPlannerEmail
+      );
+
+      // Clean up the Blob
+      await del(blobUrl);
+
+      return NextResponse.json({ success: true });
+    } catch (error) {
+      console.error('[API] Error processing submission:', error);
+      return NextResponse.json(
+        { error: 'Failed to process submission: ' + (error instanceof Error ? error.message : 'Unknown error') },
+        { status: 500 }
+      );
     }
-
-    if (!combinedReviewResult) {
-      throw new Error('Failed to process any PDF chunks');
-    }
-
-    console.log('[API] Review completed:', {
-      isCompliant: combinedReviewResult.isCompliant,
-      totalFindings: combinedReviewResult.totalFindings
-    });
-    logMemoryUsage();
-
-    // Route the email based on the review results
-    await routeReviewResults(
-      combinedReviewResult,
-      buffer,
-      new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
-      submitterEmail,
-      cityPlannerEmail
-    );
-
-    // Clean up the Blob
-    await del(blobUrl);
-
-    return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[API] Error processing submission:', error);
     return NextResponse.json(

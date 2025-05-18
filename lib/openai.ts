@@ -170,9 +170,9 @@ City: ${projectDetails.city}
 County: ${projectDetails.county}
 ${projectDetails.projectSummary ? `Project Summary: ${projectDetails.projectSummary}` : ''}
 
-[PDF Architectural Plan - Base64 Length: ${pdfBase64.length}]
+[Complete Architectural Plan Set - Base64 Length: ${pdfBase64.length}]
 
-Please analyze these plans and use the web_search tool to find applicable building codes and regulations for this location. Focus on the specific pages provided in this chunk.`,
+Please analyze the complete set of architectural plans and use the web_search tool to find applicable building codes and regulations for this location. The plans have been combined into a single input for comprehensive review.`,
         },
       ];
 
