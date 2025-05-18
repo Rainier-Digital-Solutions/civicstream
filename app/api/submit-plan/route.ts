@@ -3,15 +3,48 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+// Helper function to get memory usage
+function getMemoryUsage() {
+  const used = process.memoryUsage();
+  return {
+    rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
+    heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`,
+    heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
+    external: `${Math.round(used.external / 1024 / 1024)}MB`,
+  };
+}
+
+// Helper function for structured logging
+function logWithContext(level: string, message: string, context: any = {}) {
+  const timestamp = new Date().toISOString();
+  console.log(JSON.stringify({
+    timestamp,
+    level,
+    message,
+    memory: getMemoryUsage(),
+    ...context
+  }));
+}
+
 export async function POST(req: NextRequest) {
-  console.log('[API] Received plan submission request');
+  const requestId = Math.random().toString(36).substring(7);
+  logWithContext('info', 'Received plan submission request', { requestId });
 
   try {
+    const startTime = Date.now();
     const formData = await req.formData();
     const blobUrl = formData.get('blobUrl') as string;
 
+    logWithContext('info', 'Form data parsed', {
+      requestId,
+      hasBlobUrl: !!blobUrl,
+      blobUrlLength: blobUrl?.length,
+      formDataSize: JSON.stringify(Object.fromEntries(formData)).length,
+      processingTime: `${Date.now() - startTime}ms`
+    });
+
     if (!blobUrl) {
-      console.error('[API] Missing blobUrl');
+      logWithContext('error', 'Missing blobUrl', { requestId });
       return NextResponse.json(
         { error: 'Missing blobUrl' },
         { status: 400 }
@@ -26,23 +59,47 @@ export async function POST(req: NextRequest) {
     const county = formData.get('county') as string;
     const projectSummary = formData.get('projectSummary') as string | null;
 
+    logWithContext('info', 'Extracted form fields', {
+      requestId,
+      hasSubmitterEmail: !!submitterEmail,
+      hasCityPlannerEmail: !!cityPlannerEmail,
+      hasAddress: !!address,
+      hasParcelNumber: !!parcelNumber,
+      hasCity: !!city,
+      hasCounty: !!county,
+      hasProjectSummary: !!projectSummary
+    });
+
     if (!submitterEmail || !cityPlannerEmail || !address || !parcelNumber || !city || !county) {
-      console.error('[API] Missing required fields');
+      const missingFields = [];
+      if (!submitterEmail) missingFields.push('submitterEmail');
+      if (!cityPlannerEmail) missingFields.push('cityPlannerEmail');
+      if (!address) missingFields.push('address');
+      if (!parcelNumber) missingFields.push('parcelNumber');
+      if (!city) missingFields.push('city');
+      if (!county) missingFields.push('county');
+
+      logWithContext('error', 'Missing required fields', {
+        requestId,
+        missingFields
+      });
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    // Instead of processing here, send to the background process endpoint
     const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
     const processPlanUrl = `${baseUrl}/api/process-plan`;
 
-    console.log(`[API] Attempting to trigger background processing at: ${processPlanUrl}`);
+    logWithContext('info', 'Initiating background processing', {
+      requestId,
+      processPlanUrl,
+      environment: process.env.NODE_ENV
+    });
 
-    // Fire and forget - don't await this promise
     try {
-      console.log(`[API] DEBUG: Awaiting fetch to ${processPlanUrl}`);
+      const processStartTime = Date.now();
       const response = await fetch(processPlanUrl, {
         method: 'POST',
         headers: {
@@ -59,25 +116,48 @@ export async function POST(req: NextRequest) {
           projectSummary
         }),
       });
-      console.log(`[API] DEBUG: Fetch awaited. Background process trigger HTTP status: ${response.status}`);
+
+      const responseTime = Date.now() - processStartTime;
+      logWithContext('info', 'Background process response received', {
+        requestId,
+        status: response.status,
+        responseTime: `${responseTime}ms`
+      });
+
       if (!response.ok) {
         const text = await response.text();
-        console.error(`[API] DEBUG: Background process trigger failed with status ${response.status}: ${text}`);
+        logWithContext('error', 'Background process failed', {
+          requestId,
+          status: response.status,
+          error: text
+        });
       } else {
-        // You could even try to get response.json() if process-plan is supposed to return one
         const jsonResponse = await response.json();
-        console.log(`[API] DEBUG: Background process trigger successful, response:`, jsonResponse);
+        logWithContext('info', 'Background process initiated successfully', {
+          requestId,
+          response: jsonResponse
+        });
       }
     } catch (error) {
-      console.error(`[API] DEBUG: Error awaiting background processing fetch for URL ${processPlanUrl}:`, error);
+      logWithContext('error', 'Error in background processing', {
+        requestId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      });
     }
 
-    console.log('[API] Submission accepted and background processing started (fetch initiated).');
+    logWithContext('info', 'Submission completed', {
+      requestId,
+      totalProcessingTime: `${Date.now() - startTime}ms`
+    });
 
-    // Return success immediately
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[API] Error processing submission:', error);
+    logWithContext('error', 'Error processing submission', {
+      requestId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
     return NextResponse.json(
       { error: 'Failed to process submission: ' + (error instanceof Error ? error.message : 'Unknown error') },
       { status: 500 }

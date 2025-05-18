@@ -18,64 +18,120 @@ const BATCH_SIZE = 5;
 const MAX_SINGLE_REQUEST_SIZE = 2000000; // Maximum size in bytes for single request (~2MB)
 const VERCEL_MEMORY_SAFE_LIMIT = 40 * 1024 * 1024; // 40MB Vercel memory safe limit (tune as needed)
 
+// Helper function to get memory usage
+function getMemoryUsage() {
+    const used = process.memoryUsage();
+    return {
+        rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
+        heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`,
+        heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
+        external: `${Math.round(used.external / 1024 / 1024)}MB`,
+    };
+}
+
+// Helper function for structured logging
+function logWithContext(level: string, message: string, context: any = {}) {
+    const timestamp = new Date().toISOString();
+    console.log(JSON.stringify({
+        timestamp,
+        level,
+        message,
+        memory: getMemoryUsage(),
+        ...context
+    }));
+}
+
 // Helper to check environment variables
 function validateEnvironment() {
-    const issues = [];
+    const issues: string[] = [];
+    const envVars: Record<string, string | undefined> = {
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+        NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+        BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN
+    };
 
-    if (!process.env.OPENAI_API_KEY) {
-        issues.push('OPENAI_API_KEY is missing');
-    }
-
-    if (!process.env.NEXT_PUBLIC_API_BASE_URL) {
-        issues.push('NEXT_PUBLIC_API_BASE_URL is missing');
-    }
-
-    if (!process.env.BLOB_READ_WRITE_TOKEN) {
-        issues.push('BLOB_READ_WRITE_TOKEN may be missing (required for Vercel Blob operations)');
-    }
+    Object.entries(envVars).forEach(([key, value]) => {
+        if (!value) {
+            issues.push(`${key} is missing`);
+        }
+    });
 
     return {
         isValid: issues.length === 0,
-        issues
+        issues,
+        envVars: Object.keys(envVars).reduce<Record<string, string | undefined>>((acc, key) => ({
+            ...acc,
+            [key]: envVars[key] ? `${envVars[key]?.substring(0, 4)}...${envVars[key]?.substring(envVars[key]!.length - 4)}` : undefined
+        }), {})
     };
 }
 
 export async function POST(req: NextRequest) {
-    console.log('[ProcessPlan] Received submission request');
+    const requestId = Math.random().toString(36).substring(7);
+    const startTime = Date.now();
+    logWithContext('info', 'Received process plan request', { requestId });
 
     try {
         // Validate environment variables first
         const envCheck = validateEnvironment();
-        if (!envCheck.isValid) {
-            console.error('[ProcessPlan] Environment issues detected:', envCheck.issues);
-        }
-
-        // Parse the request to get an ID for tracking
-        const body = await req.json();
-
-        // Start the processing in the background without awaiting
-        processSubmission(body).catch((error) => {
-            console.error('[ProcessPlan] Unhandled error in background processing:', error);
+        logWithContext('info', 'Environment check completed', {
+            requestId,
+            isValid: envCheck.isValid,
+            issues: envCheck.issues,
+            envVars: envCheck.envVars
         });
 
-        // Return success immediately to the client
-        console.log('[ProcessPlan] Returning success response to client, background processing started');
-        return NextResponse.json({ success: true });
-    } catch (parseError) {
-        console.error('[ProcessPlan] Failed to parse request:', parseError);
+        if (!envCheck.isValid) {
+            logWithContext('error', 'Environment issues detected', {
+                requestId,
+                issues: envCheck.issues
+            });
+        }
+
+        // Parse the request body
+        const body = await req.json();
+        logWithContext('info', 'Request body parsed', {
+            requestId,
+            bodySize: JSON.stringify(body).length,
+            hasBlobUrl: !!body.blobUrl,
+            blobUrlLength: body.blobUrl?.length
+        });
+
+        // Process the submission synchronously for debugging
+        logWithContext('info', 'Starting synchronous processing', {
+            requestId,
+            processingTime: `${Date.now() - startTime}ms`
+        });
+
+        await processSubmission(body, requestId);
+
+        logWithContext('info', 'Processing completed', {
+            requestId,
+            totalProcessingTime: `${Date.now() - startTime}ms`
+        });
+
+        return NextResponse.json({ success: true, message: "Processing completed synchronously for debugging." });
+
+    } catch (error) {
+        logWithContext('error', 'Error in process plan request', {
+            requestId,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined,
+            processingTime: `${Date.now() - startTime}ms`
+        });
+
         return NextResponse.json(
-            { success: false, error: 'Failed to parse request' },
-            { status: 400 }
+            { success: false, error: 'Failed to process request: ' + (error instanceof Error ? error.message : 'Unknown error') },
+            { status: 500 }
         );
     }
 }
 
-async function processSubmission(body: any) {
-    console.log('[ProcessPlan] Starting background plan processing');
+async function processSubmission(body: any, requestId: string) {
+    const startTime = Date.now();
+    logWithContext('info', 'Starting plan processing', { requestId });
 
     try {
-        console.log('[ProcessPlan] Using parsed request body');
-
         const {
             blobUrl,
             submitterEmail,
@@ -87,10 +143,10 @@ async function processSubmission(body: any) {
             projectSummary
         } = body;
 
-        // Log the request parameters (without any sensitive information)
-        console.log('[ProcessPlan] Request parameters:', {
+        logWithContext('info', 'Extracted request parameters', {
+            requestId,
             hasBlobUrl: !!blobUrl,
-            blobUrlLength: blobUrl ? blobUrl.length : 0,
+            blobUrlLength: blobUrl?.length,
             hasSubmitterEmail: !!submitterEmail,
             hasCityPlannerEmail: !!cityPlannerEmail,
             hasAddress: !!address,
@@ -101,50 +157,59 @@ async function processSubmission(body: any) {
         });
 
         if (!blobUrl) {
-            console.error('[ProcessPlan] Missing blobUrl parameter');
+            logWithContext('error', 'Missing blobUrl parameter', { requestId });
             return;
         }
 
-        if (!submitterEmail || !cityPlannerEmail || !address || !parcelNumber || !city || !county) {
-            const missingFields = [];
-            if (!submitterEmail) missingFields.push('submitterEmail');
-            if (!cityPlannerEmail) missingFields.push('cityPlannerEmail');
-            if (!address) missingFields.push('address');
-            if (!parcelNumber) missingFields.push('parcelNumber');
-            if (!city) missingFields.push('city');
-            if (!county) missingFields.push('county');
+        // Validate required fields
+        const missingFields = [];
+        if (!submitterEmail) missingFields.push('submitterEmail');
+        if (!cityPlannerEmail) missingFields.push('cityPlannerEmail');
+        if (!address) missingFields.push('address');
+        if (!parcelNumber) missingFields.push('parcelNumber');
+        if (!city) missingFields.push('city');
+        if (!county) missingFields.push('county');
 
-            console.error(`[ProcessPlan] Missing required fields: ${missingFields.join(', ')}`);
+        if (missingFields.length > 0) {
+            logWithContext('error', 'Missing required fields', {
+                requestId,
+                missingFields
+            });
             return;
-        }
-
-        // Check if OpenAI API key is configured
-        if (!process.env.OPENAI_API_KEY) {
-            console.error('[ProcessPlan] OPENAI_API_KEY is not configured in environment variables');
-            return;
-        } else {
-            console.log('[ProcessPlan] OPENAI_API_KEY is configured (length:', process.env.OPENAI_API_KEY.length, ')');
         }
 
         // Fetch the file from Blob
-        console.log('[ProcessPlan] Fetching file from Blob:', blobUrl.substring(0, 50) + '...');
+        logWithContext('info', 'Fetching file from Blob', {
+            requestId,
+            blobUrl: blobUrl.substring(0, 50) + '...'
+        });
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
         try {
-            console.log('[ProcessPlan] Starting fetch request');
+            const fetchStartTime = Date.now();
             const response = await fetch(blobUrl, {
                 signal: controller.signal,
             });
-            console.log('[ProcessPlan] Fetch response received, status:', response.status);
+
+            logWithContext('info', 'Blob fetch completed', {
+                requestId,
+                status: response.status,
+                fetchTime: `${Date.now() - fetchStartTime}ms`
+            });
 
             if (!response.ok) {
                 throw new Error(`Failed to fetch blob: ${response.statusText}`);
             }
 
-            console.log('[ProcessPlan] Reading response buffer');
             const buffer = await response.arrayBuffer();
-            console.log('[ProcessPlan] Response buffer read successfully, size:', buffer.byteLength, 'bytes');
+            logWithContext('info', 'Response buffer read', {
+                requestId,
+                bufferSize: buffer.byteLength,
+                memory: getMemoryUsage()
+            });
+
             clearTimeout(timeoutId);
 
             const projectDetails = {
@@ -156,117 +221,166 @@ async function processSubmission(body: any) {
             };
 
             let reviewResult;
-            const pdfBuffer = Buffer.from(buffer); // Create buffer once
+            const pdfBuffer = Buffer.from(buffer);
             const fileName = new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf';
 
             if (pdfBuffer.byteLength <= VERCEL_MEMORY_SAFE_LIMIT) {
-                console.log(`[ProcessPlan] PDF size (${pdfBuffer.byteLength} bytes) is within Vercel memory safe limit (${VERCEL_MEMORY_SAFE_LIMIT} bytes). Attempting direct processing with Responses API.`);
+                logWithContext('info', 'Processing PDF within memory limit', {
+                    requestId,
+                    pdfSize: pdfBuffer.byteLength,
+                    memoryLimit: VERCEL_MEMORY_SAFE_LIMIT
+                });
+
                 try {
-                    console.log('[ProcessPlan] Starting PDF review with Responses API, file size:', pdfBuffer.length, 'bytes, filename:', fileName);
-
-                    // Add a timeout for the Responses API call (optional, but good practice)
-                    const responseApiTimeout = setTimeout(() => {
-                        console.warn('[ProcessPlan] WARNING: Responses API call taking longer than 3 minutes for medium file.');
-                    }, 180000); // 3 minutes, adjust as needed
-
+                    const reviewStartTime = Date.now();
                     reviewResult = await reviewPlanWithResponsesAPI(pdfBuffer, fileName, projectDetails);
 
-                    clearTimeout(responseApiTimeout);
-                    console.log('[ProcessPlan] Direct PDF review completed with Responses API:', {
+                    logWithContext('info', 'PDF review completed', {
+                        requestId,
+                        reviewTime: `${Date.now() - reviewStartTime}ms`,
                         isCompliant: reviewResult.isCompliant,
                         totalFindings: reviewResult.totalFindings,
                         hasEmailBody: !!reviewResult.submitterEmailBody
                     });
+
                 } catch (error) {
-                    console.error('[ProcessPlan] Error processing PDF with Responses API (even within memory limit):', error);
-                    console.error('[ProcessPlan] Error details:', error instanceof Error ? error.stack : 'No stack trace available');
+                    logWithContext('error', 'Error in PDF review', {
+                        requestId,
+                        error: error instanceof Error ? error.message : 'Unknown error',
+                        stack: error instanceof Error ? error.stack : undefined
+                    });
 
-                    // Fall back to the legacy chunking implementation if the Responses API fails for a "safe-sized" file
-                    console.log('[ProcessPlan] Falling back to legacy chunking implementation for "safe-sized" file.');
-                    // Note: chunkPDF also receives the full pdfBuffer. It must be memory efficient.
+                    // Fall back to chunking
+                    logWithContext('info', 'Falling back to chunking approach', { requestId });
                     const chunks = await chunkPDF(pdfBuffer);
-                    console.log(`[ProcessPlan] Split PDF into ${chunks.length} chunks (fallback for medium file).`);
 
-                    console.log('[ProcessPlan] Phase 1: Extracting metadata from all chunks (fallback)');
+                    logWithContext('info', 'PDF chunking completed', {
+                        requestId,
+                        numChunks: chunks.length,
+                        memory: getMemoryUsage()
+                    });
+
+                    // Process chunks in batches
                     const metadataResults: PlanMetadata[] = [];
                     for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+                        const batchStartTime = Date.now();
                         const batchChunks = chunks.slice(i, i + BATCH_SIZE);
-                        console.log(`[ProcessPlan] Processing metadata batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(chunks.length / BATCH_SIZE)} (fallback)`);
+
+                        logWithContext('info', 'Processing metadata batch', {
+                            requestId,
+                            batchNumber: Math.floor(i / BATCH_SIZE) + 1,
+                            totalBatches: Math.ceil(chunks.length / BATCH_SIZE)
+                        });
+
                         const batchPromises = batchChunks.map(chunk =>
                             extractPlanMetadata(chunk.base64, projectDetails)
                                 .catch((e: Error) => {
-                                    console.error(`[ProcessPlan] Error extracting metadata from chunk (fallback):`, e);
+                                    logWithContext('error', 'Error extracting metadata from chunk', {
+                                        requestId,
+                                        error: e.message,
+                                        stack: e.stack
+                                    });
                                     return null;
                                 })
                         );
+
                         const batchResults = await Promise.all(batchPromises);
                         metadataResults.push(...batchResults.filter(Boolean) as PlanMetadata[]);
+
+                        logWithContext('info', 'Batch processing completed', {
+                            requestId,
+                            batchTime: `${Date.now() - batchStartTime}ms`,
+                            successfulResults: batchResults.filter(Boolean).length
+                        });
                     }
-                    console.log('[ProcessPlan] Phase 2: Processing consolidated metadata (fallback)');
+
+                    const reviewStartTime = Date.now();
                     reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
-                    console.log('[ProcessPlan] Fallback review completed:', {
+
+                    logWithContext('info', 'Metadata review completed', {
+                        requestId,
+                        reviewTime: `${Date.now() - reviewStartTime}ms`,
                         isCompliant: reviewResult.isCompliant,
                         totalFindings: reviewResult.totalFindings
                     });
                 }
             } else {
-                // For very large PDFs, go directly to legacy chunking
-                console.log(`[ProcessPlan] PDF size (${pdfBuffer.byteLength} bytes) exceeds Vercel memory safe limit (${VERCEL_MEMORY_SAFE_LIMIT} bytes). Using legacy chunking approach directly.`);
-                // CRITICAL: chunkPDF must be memory efficient enough to handle pdfBuffer.byteLength here.
-                // If chunkPDF itself loads the entire large file into memory for its operations, it might also fail.
-                // Consider refactoring chunkPDF to use streaming input if issues persist for very large files.
+                logWithContext('info', 'PDF exceeds memory limit, using chunking approach', {
+                    requestId,
+                    pdfSize: pdfBuffer.byteLength,
+                    memoryLimit: VERCEL_MEMORY_SAFE_LIMIT
+                });
+
                 const chunks = await chunkPDF(pdfBuffer);
-                console.log(`[ProcessPlan] Split PDF into ${chunks.length} chunks (large file path).`);
+                logWithContext('info', 'PDF chunking completed', {
+                    requestId,
+                    numChunks: chunks.length,
+                    memory: getMemoryUsage()
+                });
 
-                // Phase 1: Extract metadata from all chunks
-                console.log('[ProcessPlan] Phase 1: Extracting metadata from all chunks (large file path)');
+                // Process chunks in batches
                 const metadataResults: PlanMetadata[] = [];
-
                 for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+                    const batchStartTime = Date.now();
                     const batchChunks = chunks.slice(i, i + BATCH_SIZE);
-                    console.log(`[ProcessPlan] Processing metadata batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(chunks.length / BATCH_SIZE)} (large file path)`);
+
+                    logWithContext('info', 'Processing metadata batch', {
+                        requestId,
+                        batchNumber: Math.floor(i / BATCH_SIZE) + 1,
+                        totalBatches: Math.ceil(chunks.length / BATCH_SIZE)
+                    });
+
                     const batchPromises = batchChunks.map(chunk =>
                         extractPlanMetadata(chunk.base64, projectDetails)
                             .catch((error: Error) => {
-                                console.error(`[ProcessPlan] Error extracting metadata from chunk (large file path):`, error);
+                                logWithContext('error', 'Error extracting metadata from chunk', {
+                                    requestId,
+                                    error: error.message,
+                                    stack: error.stack
+                                });
                                 return null;
                             })
                     );
+
                     const batchResults = await Promise.all(batchPromises);
                     metadataResults.push(...batchResults.filter(Boolean) as PlanMetadata[]);
+
+                    logWithContext('info', 'Batch processing completed', {
+                        requestId,
+                        batchTime: `${Date.now() - batchStartTime}ms`,
+                        successfulResults: batchResults.filter(Boolean).length
+                    });
                 }
 
-                // Phase 2: Process the consolidated metadata in a single request
-                console.log('[ProcessPlan] Phase 2: Processing consolidated metadata (large file path)');
+                const reviewStartTime = Date.now();
                 reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
-                console.log('[ProcessPlan] Large PDF review via chunking completed:', {
+
+                logWithContext('info', 'Metadata review completed', {
+                    requestId,
+                    reviewTime: `${Date.now() - reviewStartTime}ms`,
                     isCompliant: reviewResult.isCompliant,
                     totalFindings: reviewResult.totalFindings
                 });
             }
 
-            // Send email using the email endpoint
-            console.log('[ProcessPlan] Preparing to send email');
+            // Send email
+            logWithContext('info', 'Preparing to send email', { requestId });
 
             const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
-            console.log('[ProcessPlan] Email endpoint URL:', `${baseUrl}/api/send-email`);
+            const emailEndpoint = `${baseUrl}/api/send-email`;
 
-            // Check email content validity before sending
             if (!reviewResult.submitterEmailBody || !reviewResult.cityPlannerEmailBody) {
-                console.error('[ProcessPlan] WARNING: Email bodies are missing or empty');
+                logWithContext('error', 'Missing email content', {
+                    requestId,
+                    hasSubmitterEmailBody: !!reviewResult.submitterEmailBody,
+                    hasCityPlannerEmailBody: !!reviewResult.cityPlannerEmailBody
+                });
+                return;
             }
 
-            console.log('[ProcessPlan] Attempting to send email:', {
-                baseUrl,
-                submitterEmail,
-                cityPlannerEmail,
-                isCompliant: reviewResult.isCompliant,
-                hasReviewResult: !!reviewResult,
-                hasEmailBodies: !!(reviewResult.submitterEmailBody && reviewResult.cityPlannerEmailBody)
-            });
-
             try {
-                const emailResponse = await fetch(`${baseUrl}/api/send-email`, {
+                const emailStartTime = Date.now();
+                const emailResponse = await fetch(emailEndpoint, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -280,48 +394,80 @@ async function processSubmission(body: any) {
                     }),
                 });
 
-                console.log('[ProcessPlan] Email API responded with status:', emailResponse.status);
+                logWithContext('info', 'Email API response received', {
+                    requestId,
+                    status: emailResponse.status,
+                    emailTime: `${Date.now() - emailStartTime}ms`
+                });
 
                 if (!emailResponse.ok) {
                     let errorMessage = emailResponse.statusText;
                     try {
                         const errorData = await emailResponse.json();
-                        console.error('[ProcessPlan] Email sending failed:', {
+                        logWithContext('error', 'Email sending failed', {
+                            requestId,
                             status: emailResponse.status,
-                            statusText: emailResponse.statusText,
                             error: errorData.error
                         });
                         errorMessage = errorData.error || errorMessage;
                     } catch (parseError) {
-                        console.error('[ProcessPlan] Could not parse error response:', parseError);
+                        logWithContext('error', 'Could not parse error response', {
+                            requestId,
+                            error: parseError instanceof Error ? parseError.message : 'Unknown error'
+                        });
                     }
                     throw new Error(`Failed to send email: ${errorMessage}`);
                 }
 
-                console.log('[ProcessPlan] Email sent successfully');
             } catch (emailError) {
-                console.error('[ProcessPlan] Error sending email:', emailError);
-                console.error('[ProcessPlan] Email error details:', emailError instanceof Error ? emailError.stack : 'No stack trace available');
+                logWithContext('error', 'Error sending email', {
+                    requestId,
+                    error: emailError instanceof Error ? emailError.message : 'Unknown error',
+                    stack: emailError instanceof Error ? emailError.stack : undefined
+                });
                 throw new Error('Failed to send email: ' + (emailError instanceof Error ? emailError.message : 'Unknown error'));
             }
 
             // Clean up the Blob
             try {
+                const deleteStartTime = Date.now();
                 await del(blobUrl);
-                console.log('[ProcessPlan] Blob successfully deleted from storage');
+                logWithContext('info', 'Blob deleted successfully', {
+                    requestId,
+                    deleteTime: `${Date.now() - deleteStartTime}ms`
+                });
             } catch (error) {
                 if (error instanceof vercelBlob.BlobRequestAbortedError) {
-                    console.error('[ProcessPlan] Blob deletion was aborted');
+                    logWithContext('error', 'Blob deletion was aborted', { requestId });
                 } else {
-                    console.error('[ProcessPlan] Error deleting blob:', error);
+                    logWithContext('error', 'Error deleting blob', {
+                        requestId,
+                        error: error instanceof Error ? error.message : 'Unknown error',
+                        stack: error instanceof Error ? error.stack : undefined
+                    });
                 }
             }
 
-            console.log('[ProcessPlan] Background processing completed successfully');
+            logWithContext('info', 'Processing completed successfully', {
+                requestId,
+                totalProcessingTime: `${Date.now() - startTime}ms`
+            });
+
         } catch (error) {
-            console.error('[ProcessPlan] Error in background processing:', error);
+            logWithContext('error', 'Error in blob processing', {
+                requestId,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                stack: error instanceof Error ? error.stack : undefined
+            });
+            throw error;
         }
     } catch (error) {
-        console.error('[ProcessPlan] Error parsing request:', error);
+        logWithContext('error', 'Error in submission processing', {
+            requestId,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined,
+            totalProcessingTime: `${Date.now() - startTime}ms`
+        });
+        throw error;
     }
 } 
