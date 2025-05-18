@@ -6,6 +6,12 @@ import { chunkPDF } from '@/lib/pdf-utils';
 export const dynamic = 'force-dynamic';
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
+export const config = {
+  api: {
+    responseLimit: '50mb',
+  },
+}
+
 function logMemoryUsage() {
   const used = process.memoryUsage();
   console.log('[API] Memory usage:', {
