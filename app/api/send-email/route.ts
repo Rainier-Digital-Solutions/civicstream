@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 
 // Email configuration
-const isSecure = process.env.EMAIL_SECUgRE === 'true';
+const isSecure = process.env.EMAIL_SECURE === 'true';
 const emailConfig = {
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
     port: isSecure ? 465 : 587,
@@ -18,6 +18,7 @@ const emailConfig = {
     },
 };
 
+// Create transporter
 const transporter = nodemailer.createTransport(emailConfig);
 
 // Add detailed logging for email configuration
@@ -29,19 +30,6 @@ console.log('[Email] Email configuration:', {
         user: emailConfig.auth.user,
         hasPassword: !!emailConfig.auth.pass,
         passwordLength: emailConfig.auth.pass?.length
-    }
-});
-
-// Verify transporter configuration immediately
-transporter.verify(function (error, success) {
-    if (error) {
-        console.error('[Email] Initial transporter verification failed:', {
-            error: error.message,
-            code: (error as any).code,
-            command: (error as any).command
-        });
-    } else {
-        console.log('[Email] Initial transporter verification successful');
     }
 });
 
@@ -67,6 +55,10 @@ export async function POST(req: NextRequest) {
             isSecure,
             port: emailConfig.port
         });
+        return NextResponse.json(
+            { error: 'Email configuration is incomplete' },
+            { status: 500 }
+        );
     }
 
     // Verify transporter configuration
@@ -74,7 +66,11 @@ export async function POST(req: NextRequest) {
         await new Promise((resolve, reject) => {
             transporter.verify(function (error, success) {
                 if (error) {
-                    console.error('[Email] Transporter verification failed:', error);
+                    console.error('[Email] Transporter verification failed:', {
+                        error: error.message,
+                        code: (error as any).code,
+                        command: (error as any).command
+                    });
                     reject(error);
                 } else {
                     console.log('[Email] Transporter is ready to send messages');
@@ -84,6 +80,10 @@ export async function POST(req: NextRequest) {
         });
     } catch (error) {
         console.error('[Email] Failed to verify transporter:', error);
+        return NextResponse.json(
+            { error: 'Failed to verify email configuration: ' + (error instanceof Error ? error.message : 'Unknown error') },
+            { status: 500 }
+        );
     }
 
     try {
@@ -164,7 +164,10 @@ export async function POST(req: NextRequest) {
                     hasAuth: !!emailConfig.auth.user && !!emailConfig.auth.pass
                 }
             });
-            throw sendError;
+            return NextResponse.json(
+                { error: 'Failed to send email: ' + (sendError instanceof Error ? sendError.message : 'Unknown error') },
+                { status: 500 }
+            );
         }
     } catch (error) {
         console.error('[Email] Error processing email request:', {
@@ -173,7 +176,7 @@ export async function POST(req: NextRequest) {
             errorStack: error instanceof Error ? error.stack : undefined
         });
         return NextResponse.json(
-            { error: 'Failed to send email: ' + (error instanceof Error ? error.message : 'Unknown error') },
+            { error: 'Failed to process email request: ' + (error instanceof Error ? error.message : 'Unknown error') },
             { status: 500 }
         );
     }
