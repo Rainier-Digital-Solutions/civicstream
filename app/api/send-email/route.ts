@@ -91,6 +91,7 @@ export async function POST(req: NextRequest) {
         const {
             reviewResult,
             blobUrl,
+            fileBase64,
             fileName,
             submitterEmail,
             cityPlannerEmail,
@@ -100,16 +101,19 @@ export async function POST(req: NextRequest) {
         console.log('[Email] Request data:', {
             hasReviewResult: !!reviewResult,
             blobUrl,
+            hasFileBase64: !!fileBase64,
             fileName,
             submitterEmail,
             cityPlannerEmail,
             isCompliant: reviewResult?.isCompliant
         });
 
-        if (!reviewResult || !blobUrl || !fileName || !submitterEmail || !cityPlannerEmail) {
+        // Check for required fields
+        if (!reviewResult || (!blobUrl && !fileBase64) || !fileName || !submitterEmail || !cityPlannerEmail) {
             console.error('[Email] Missing required fields:', {
                 hasReviewResult: !!reviewResult,
                 hasBlobUrl: !!blobUrl,
+                hasFileBase64: !!fileBase64,
                 hasFileName: !!fileName,
                 hasSubmitterEmail: !!submitterEmail,
                 hasCityPlannerEmail: !!cityPlannerEmail
@@ -120,35 +124,47 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // Fetch the PDF from the Blob URL
-        console.log('[Email] Fetching PDF from Blob URL:', blobUrl);
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+        let pdfBuffer: Buffer;
 
-        let pdfBuffer;
-        try {
-            const response = await fetch(blobUrl, {
-                signal: controller.signal,
-            });
-
-            if (!response.ok) {
-                throw new Error(`Failed to fetch blob: ${response.statusText}`);
-            }
-
-            const buffer = await response.arrayBuffer();
-            pdfBuffer = Buffer.from(buffer);
-            clearTimeout(timeoutId);
-
-            console.log('[Email] Successfully fetched PDF from Blob:', {
+        // Check if we have base64 data directly
+        if (fileBase64) {
+            // Convert base64 to buffer
+            console.log('[Email] Using provided base64 data');
+            pdfBuffer = Buffer.from(fileBase64, 'base64');
+            console.log('[Email] Successfully created buffer from base64:', {
                 fileSize: pdfBuffer.length,
                 fileSizeMB: (pdfBuffer.length / (1024 * 1024)).toFixed(2)
             });
-        } catch (fetchError) {
-            console.error('[Email] Failed to fetch PDF from Blob:', fetchError);
-            return NextResponse.json(
-                { error: 'Failed to fetch PDF from Blob: ' + (fetchError instanceof Error ? fetchError.message : 'Unknown error') },
-                { status: 500 }
-            );
+        } else {
+            // Fetch the PDF from the Blob URL
+            console.log('[Email] Fetching PDF from Blob URL:', blobUrl);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+            try {
+                const response = await fetch(blobUrl, {
+                    signal: controller.signal,
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch blob: ${response.statusText}`);
+                }
+
+                const buffer = await response.arrayBuffer();
+                pdfBuffer = Buffer.from(buffer);
+                clearTimeout(timeoutId);
+
+                console.log('[Email] Successfully fetched PDF from Blob:', {
+                    fileSize: pdfBuffer.length,
+                    fileSizeMB: (pdfBuffer.length / (1024 * 1024)).toFixed(2)
+                });
+            } catch (fetchError) {
+                console.error('[Email] Failed to fetch PDF from Blob:', fetchError);
+                return NextResponse.json(
+                    { error: 'Failed to fetch PDF from Blob: ' + (fetchError instanceof Error ? fetchError.message : 'Unknown error') },
+                    { status: 500 }
+                );
+            }
         }
 
         const attachment = {
