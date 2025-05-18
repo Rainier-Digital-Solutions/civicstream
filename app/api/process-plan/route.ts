@@ -16,6 +16,7 @@ export const runtime = 'nodejs';
 const TIMEOUT_MS = 300000; // 5 minutes
 const BATCH_SIZE = 5;
 const MAX_SINGLE_REQUEST_SIZE = 2000000; // Maximum size in bytes for single request (~2MB)
+const VERCEL_MEMORY_SAFE_LIMIT = 40 * 1024 * 1024; // 40MB Vercel memory safe limit (tune as needed)
 
 // Helper to check environment variables
 function validateEnvironment() {
@@ -155,104 +156,93 @@ async function processSubmission(body: any) {
             };
 
             let reviewResult;
+            const pdfBuffer = Buffer.from(buffer); // Create buffer once
+            const fileName = new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf';
 
-            // Check if we can process the entire PDF at once
-            if (buffer.byteLength <= MAX_SINGLE_REQUEST_SIZE) {
-                console.log(`[ProcessPlan] Processing entire PDF in single request (${buffer.byteLength} bytes)`);
-                const pdfBuffer = Buffer.from(buffer);
-                const fileName = new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf';
-
+            if (pdfBuffer.byteLength <= VERCEL_MEMORY_SAFE_LIMIT) {
+                console.log(`[ProcessPlan] PDF size (${pdfBuffer.byteLength} bytes) is within Vercel memory safe limit (${VERCEL_MEMORY_SAFE_LIMIT} bytes). Attempting direct processing with Responses API.`);
                 try {
                     console.log('[ProcessPlan] Starting PDF review with Responses API, file size:', pdfBuffer.length, 'bytes, filename:', fileName);
 
-                    // Add a timeout for the Responses API call
+                    // Add a timeout for the Responses API call (optional, but good practice)
                     const responseApiTimeout = setTimeout(() => {
-                        console.error('[ProcessPlan] WARNING: Responses API call taking longer than expected (30 seconds)');
-                    }, 30000);
+                        console.warn('[ProcessPlan] WARNING: Responses API call taking longer than 3 minutes for medium file.');
+                    }, 180000); // 3 minutes, adjust as needed
 
-                    // Use the new Responses API implementation
                     reviewResult = await reviewPlanWithResponsesAPI(pdfBuffer, fileName, projectDetails);
 
                     clearTimeout(responseApiTimeout);
-                    console.log('[ProcessPlan] Full PDF review completed with Responses API:', {
+                    console.log('[ProcessPlan] Direct PDF review completed with Responses API:', {
                         isCompliant: reviewResult.isCompliant,
                         totalFindings: reviewResult.totalFindings,
                         hasEmailBody: !!reviewResult.submitterEmailBody
                     });
                 } catch (error) {
-                    console.error('[ProcessPlan] Error processing full PDF with Responses API:', error);
+                    console.error('[ProcessPlan] Error processing PDF with Responses API (even within memory limit):', error);
                     console.error('[ProcessPlan] Error details:', error instanceof Error ? error.stack : 'No stack trace available');
 
-                    // Fall back to the old implementation if the Responses API fails
-                    console.log('[ProcessPlan] Falling back to legacy implementation');
-                    const fullPdfBase64 = pdfBuffer.toString('base64');
-                    try {
-                        reviewResult = await reviewArchitecturalPlan(fullPdfBase64, projectDetails);
-                        console.log('[ProcessPlan] Fallback review completed:', {
-                            isCompliant: reviewResult.isCompliant,
-                            totalFindings: reviewResult.totalFindings
-                        });
-                    } catch (fallbackError) {
-                        console.error('[ProcessPlan] Error in fallback processing:', fallbackError);
-                        throw fallbackError;
-                    }
-                }
-            } else {
-                // For large PDFs, we'll now use the same Responses API approach
-                // but with just the first few pages to keep the processing manageable
-                console.log('[ProcessPlan] PDF is too large for single request, using first few pages with Responses API');
-
-                // Use the Buffer approach directly to avoid base64 conversion overhead
-                const pdfBuffer = Buffer.from(buffer);
-                const fileName = new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf';
-
-                try {
-                    // Use the Responses API with the large PDF
-                    console.log('[ProcessPlan] Processing large PDF with Responses API');
-                    reviewResult = await reviewPlanWithResponsesAPI(pdfBuffer, fileName, projectDetails);
-                    console.log('[ProcessPlan] Large PDF review completed with Responses API:', {
-                        isCompliant: reviewResult.isCompliant,
-                        totalFindings: reviewResult.totalFindings
-                    });
-                } catch (error) {
-                    console.error('[ProcessPlan] Error processing large PDF with Responses API:', error);
-
-                    // Fall back to the legacy chunking approach
-                    console.log('[ProcessPlan] Falling back to legacy chunking approach');
-
+                    // Fall back to the legacy chunking implementation if the Responses API fails for a "safe-sized" file
+                    console.log('[ProcessPlan] Falling back to legacy chunking implementation for "safe-sized" file.');
+                    // Note: chunkPDF also receives the full pdfBuffer. It must be memory efficient.
                     const chunks = await chunkPDF(pdfBuffer);
-                    console.log(`[ProcessPlan] Split PDF into ${chunks.length} chunks (two-phase approach)`);
+                    console.log(`[ProcessPlan] Split PDF into ${chunks.length} chunks (fallback for medium file).`);
 
-                    // Phase 1: Extract metadata from all chunks
-                    console.log('[ProcessPlan] Phase 1: Extracting metadata from all chunks');
+                    console.log('[ProcessPlan] Phase 1: Extracting metadata from all chunks (fallback)');
                     const metadataResults: PlanMetadata[] = [];
-
                     for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
                         const batchChunks = chunks.slice(i, i + BATCH_SIZE);
-                        console.log(`[ProcessPlan] Processing metadata batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(chunks.length / BATCH_SIZE)}`);
-
-                        // Process chunks in parallel for metadata extraction
+                        console.log(`[ProcessPlan] Processing metadata batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(chunks.length / BATCH_SIZE)} (fallback)`);
                         const batchPromises = batchChunks.map(chunk =>
                             extractPlanMetadata(chunk.base64, projectDetails)
-                                .catch((error: Error) => {
-                                    console.error(`[ProcessPlan] Error extracting metadata from chunk:`, error);
+                                .catch((e: Error) => {
+                                    console.error(`[ProcessPlan] Error extracting metadata from chunk (fallback):`, e);
                                     return null;
                                 })
                         );
-
                         const batchResults = await Promise.all(batchPromises);
                         metadataResults.push(...batchResults.filter(Boolean) as PlanMetadata[]);
                     }
-
-                    // Phase 2: Process the consolidated metadata in a single request
-                    console.log('[ProcessPlan] Phase 2: Processing consolidated metadata');
-
+                    console.log('[ProcessPlan] Phase 2: Processing consolidated metadata (fallback)');
                     reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
-                    console.log('[ProcessPlan] Two-phase review completed:', {
+                    console.log('[ProcessPlan] Fallback review completed:', {
                         isCompliant: reviewResult.isCompliant,
                         totalFindings: reviewResult.totalFindings
                     });
                 }
+            } else {
+                // For very large PDFs, go directly to legacy chunking
+                console.log(`[ProcessPlan] PDF size (${pdfBuffer.byteLength} bytes) exceeds Vercel memory safe limit (${VERCEL_MEMORY_SAFE_LIMIT} bytes). Using legacy chunking approach directly.`);
+                // CRITICAL: chunkPDF must be memory efficient enough to handle pdfBuffer.byteLength here.
+                // If chunkPDF itself loads the entire large file into memory for its operations, it might also fail.
+                // Consider refactoring chunkPDF to use streaming input if issues persist for very large files.
+                const chunks = await chunkPDF(pdfBuffer);
+                console.log(`[ProcessPlan] Split PDF into ${chunks.length} chunks (large file path).`);
+
+                // Phase 1: Extract metadata from all chunks
+                console.log('[ProcessPlan] Phase 1: Extracting metadata from all chunks (large file path)');
+                const metadataResults: PlanMetadata[] = [];
+
+                for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+                    const batchChunks = chunks.slice(i, i + BATCH_SIZE);
+                    console.log(`[ProcessPlan] Processing metadata batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(chunks.length / BATCH_SIZE)} (large file path)`);
+                    const batchPromises = batchChunks.map(chunk =>
+                        extractPlanMetadata(chunk.base64, projectDetails)
+                            .catch((error: Error) => {
+                                console.error(`[ProcessPlan] Error extracting metadata from chunk (large file path):`, error);
+                                return null;
+                            })
+                    );
+                    const batchResults = await Promise.all(batchPromises);
+                    metadataResults.push(...batchResults.filter(Boolean) as PlanMetadata[]);
+                }
+
+                // Phase 2: Process the consolidated metadata in a single request
+                console.log('[ProcessPlan] Phase 2: Processing consolidated metadata (large file path)');
+                reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
+                console.log('[ProcessPlan] Large PDF review via chunking completed:', {
+                    isCompliant: reviewResult.isCompliant,
+                    totalFindings: reviewResult.totalFindings
+                });
             }
 
             // Send email using the email endpoint
