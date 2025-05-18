@@ -142,7 +142,12 @@ export function SubmissionForm() {
       });
 
       const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || '';
-      const response = await fetch(`${apiBaseUrl}/api/submit-plan`, {
+      const apiUrl = `${apiBaseUrl}/api/submit-plan`;
+      console.log('Making request to:', apiUrl);
+      console.log('Environment:', process.env.VERCEL_ENV);
+      console.log('API Base URL:', process.env.NEXT_PUBLIC_API_BASE_URL);
+
+      const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
       });
