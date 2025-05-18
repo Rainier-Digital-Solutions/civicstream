@@ -169,7 +169,7 @@ City: ${projectDetails.city}
 County: ${projectDetails.county}
 ${projectDetails.projectSummary ? `Project Summary: ${projectDetails.projectSummary}` : ''}
 
-[PDR Architectural Plan - Base64 Length: ${pdfBase64.length}]
+[PDF Architectural Plan - Base64 Length: ${pdfBase64.length}]
 
 Please analyze these plans and use the web_search tool to find applicable building codes and regulations for this location.`,
         },
@@ -195,13 +195,13 @@ Please analyze these plans and use the web_search tool to find applicable buildi
         }
       ];
 
-      console.log(`[OpenAI] Attempt ${attempts + 1}/${maxRetries}: Sending request to OpenAI`);
+      console.log(`[OpenAI] Attempt ${attempts + 1}/${maxRetries}: Sending initial request to OpenAI`);
       const response = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: baseMessages,
         tools,
-        tool_choice: "auto", // Changed from specific function to auto to ensure proper tool usage
-        // max_tokens: 8000,
+        tool_choice: "auto",
+        stream: false
       });
 
       console.log('[OpenAI] Received response from OpenAI');
@@ -212,42 +212,54 @@ Please analyze these plans and use the web_search tool to find applicable buildi
         throw new Error('No web search tool call received');
       }
 
-      const toolCall = message.tool_calls[0];
-      const args = JSON.parse(toolCall.function.arguments);
-      console.log('[OpenAI] Web search query:', args.search_query);
+      // Process all tool calls
+      const toolCalls = message.tool_calls;
+      const toolResponses: ChatCompletionMessageParam[] = [];
 
-      const searchResults = await performWebSearch(args.search_query, 5);
+      for (const toolCall of toolCalls) {
+        if (toolCall.function.name === 'web_search') {
+          const args = JSON.parse(toolCall.function.arguments);
+          console.log('[OpenAI] Web search query:', args.search_query);
 
-      if (searchResults.length === 0) {
-        console.warn('[OpenAI] No search results returned for query:', args.search_query);
-      }
+          const searchResults = await performWebSearch(args.search_query, 5);
+          console.log('[OpenAI] Web search returned', searchResults.length, 'results');
 
-      const secondResponse = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          ...baseMessages,
-          message,
-          {
+          toolResponses.push({
             role: "tool",
             tool_call_id: toolCall.id,
             content: JSON.stringify({
               search_results: searchResults,
               instruction: "Use these search results to determine applicable code sections and identify any violations in the plans. Ensure all findings reference specific code sections from the search results."
             })
-          },
+          });
+        }
+      }
+
+      // Create a streaming response for the final analysis
+      const stream = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          ...baseMessages,
+          message,
+          ...toolResponses,
           {
             role: "user",
             content: "Please analyze the architectural plans using the building codes and regulations found in the search results. Compare the plans against these codes to identify any compliance issues. Provide a detailed review following the required JSON format."
           }
         ],
-        // max_tokens: 8000,
+        stream: true
       });
 
-      const planReviewText = secondResponse.choices[0].message.content || "";
-      console.log('[OpenAI] Raw response length:', planReviewText.length);
+      let fullResponse = '';
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        fullResponse += content;
+      }
+
+      console.log('[OpenAI] Raw response length:', fullResponse.length);
 
       try {
-        const result = JSON.parse(planReviewText);
+        const result = JSON.parse(fullResponse);
         console.log('[OpenAI] Successfully parsed JSON response');
 
         // Enhanced validation of the response structure
@@ -282,88 +294,58 @@ Please analyze these plans and use the web_search tool to find applicable buildi
         };
       } catch (parseError) {
         console.error(`[OpenAI] Attempt ${attempts + 1} failed to parse JSON:`, parseError);
-        console.error('[OpenAI] Raw response that failed to parse:', planReviewText);
+        console.error('[OpenAI] Raw response that failed to parse:', fullResponse);
         lastError = parseError instanceof Error ? parseError : new Error('Failed to parse AI response as JSON');
 
-        // If this was the last attempt, return a default response
         if (attempts === maxRetries - 1) {
-          console.log('[OpenAI] All retry attempts failed, returning default response');
-          return {
-            summary: "Unable to process the plan due to technical difficulties. Please try again.",
-            criticalFindings: [],
-            majorFindings: [],
-            minorFindings: [],
-            totalFindings: 0,
-            isCompliant: false,
-            cityPlannerEmailBody: `<div style="color: red; font-size: 24px; font-weight: bold;">Technical Error</div>
-              <hr>
-              <p>We encountered a technical error while processing your plan. Please try submitting again.</p>
-              <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
-                <h3 style="color: #0066cc;">Review Summary</h3>
-                <p>Unable to process the plan due to technical difficulties.</p>
-              </div>
-              <div style="font-size: 12px; color: #666; margin-top: 20px;">
-                This email was automatically generated by CivicStream. The plan could not be processed due to technical difficulties.
-              </div>`,
-            submitterEmailBody: `<div style="color: red; font-size: 24px; font-weight: bold;">Technical Error</div>
-              <hr>
-              <p>We encountered a technical error while processing your plan. Please try submitting again.</p>
-              <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
-                <h3 style="color: #0066cc;">Review Summary</h3>
-                <p>Unable to process the plan due to technical difficulties.</p>
-              </div>
-              <div style="font-size: 12px; color: #666; margin-top: 20px;">
-                This email was automatically generated by CivicStream. The plan could not be processed due to technical difficulties.
-              </div>`
-          };
+          return getDefaultErrorResponse();
         }
       }
     } catch (error) {
       console.error(`[OpenAI] Attempt ${attempts + 1} failed with error:`, error);
       lastError = error instanceof Error ? error : new Error('Unknown error occurred');
 
-      // If this was the last attempt, return a default response
       if (attempts === maxRetries - 1) {
-        console.log('[OpenAI] All retry attempts failed, returning default response');
-        return {
-          summary: "Unable to process the plan due to technical difficulties. Please try again.",
-          criticalFindings: [],
-          majorFindings: [],
-          minorFindings: [],
-          totalFindings: 0,
-          isCompliant: false,
-          cityPlannerEmailBody: `<div style="color: red; font-size: 24px; font-weight: bold;">Technical Error</div>
-            <hr>
-            <p>We encountered a technical error while processing your plan. Please try submitting again.</p>
-            <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
-              <h3 style="color: #0066cc;">Review Summary</h3>
-              <p>Unable to process the plan due to technical difficulties.</p>
-            </div>
-            <div style="font-size: 12px; color: #666; margin-top: 20px;">
-              This email was automatically generated by CivicStream. The plan could not be processed due to technical difficulties.
-            </div>`,
-          submitterEmailBody: `<div style="color: red; font-size: 24px; font-weight: bold;">Technical Error</div>
-            <hr>
-            <p>We encountered a technical error while processing your plan. Please try submitting again.</p>
-            <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
-              <h3 style="color: #0066cc;">Review Summary</h3>
-              <p>Unable to process the plan due to technical difficulties.</p>
-            </div>
-            <div style="font-size: 12px; color: #666; margin-top: 20px;">
-              This email was automatically generated by CivicStream. The plan could not be processed due to technical difficulties.
-            </div>`
-        };
+        return getDefaultErrorResponse();
       }
     }
 
     attempts++;
-    // Add a small delay between retries
     if (attempts < maxRetries) {
       await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
     }
   }
 
-  // This should never be reached due to the default response in the catch blocks,
-  // but TypeScript needs it for type safety
   throw lastError || new Error('Failed to process plan after all retry attempts');
+}
+
+function getDefaultErrorResponse(): ReviewResult {
+  return {
+    summary: "Unable to process the plan due to technical difficulties. Please try again.",
+    criticalFindings: [],
+    majorFindings: [],
+    minorFindings: [],
+    totalFindings: 0,
+    isCompliant: false,
+    cityPlannerEmailBody: `<div style="color: red; font-size: 24px; font-weight: bold;">Technical Error</div>
+      <hr>
+      <p>We encountered a technical error while processing your plan. Please try submitting again.</p>
+      <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
+        <h3 style="color: #0066cc;">Review Summary</h3>
+        <p>Unable to process the plan due to technical difficulties.</p>
+      </div>
+      <div style="font-size: 12px; color: #666; margin-top: 20px;">
+        This email was automatically generated by CivicStream. The plan could not be processed due to technical difficulties.
+      </div>`,
+    submitterEmailBody: `<div style="color: red; font-size: 24px; font-weight: bold;">Technical Error</div>
+      <hr>
+      <p>We encountered a technical error while processing your plan. Please try submitting again.</p>
+      <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
+        <h3 style="color: #0066cc;">Review Summary</h3>
+        <p>Unable to process the plan due to technical difficulties.</p>
+      </div>
+      <div style="font-size: 12px; color: #666; margin-top: 20px;">
+        This email was automatically generated by CivicStream. The plan could not be processed due to technical difficulties.
+      </div>`
+  };
 }
