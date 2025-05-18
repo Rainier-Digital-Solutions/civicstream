@@ -125,6 +125,9 @@ export function SubmissionForm() {
         formData.append('projectSummary', data.projectSummary);
       }
 
+      console.log('API Base URL:', process.env.NEXT_PUBLIC_API_BASE_URL);
+      console.log('Full API URL:', `${process.env.NEXT_PUBLIC_API_BASE_URL}/api/submit-plan`);
+
       console.log('Submitting plan for review:', {
         fileName: file.name,
         fileSize: file.size,
