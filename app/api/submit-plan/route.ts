@@ -130,7 +130,7 @@ async function processSubmission(req: NextRequest) {
         },
         body: JSON.stringify({
           reviewResult: combinedResult,
-          pdfBuffer: Buffer.from(buffer).toString('base64'),
+          blobUrl: blobUrl,
           fileName: new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
           submitterEmail,
           cityPlannerEmail,

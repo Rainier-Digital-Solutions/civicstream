@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
         const body = await req.json();
         const {
             reviewResult,
-            pdfBuffer,
+            blobUrl,
             fileName,
             submitterEmail,
             cityPlannerEmail,
@@ -99,17 +99,17 @@ export async function POST(req: NextRequest) {
         // Log request data (excluding sensitive information)
         console.log('[Email] Request data:', {
             hasReviewResult: !!reviewResult,
-            hasPdfBuffer: !!pdfBuffer,
+            blobUrl,
             fileName,
             submitterEmail,
             cityPlannerEmail,
             isCompliant: reviewResult?.isCompliant
         });
 
-        if (!reviewResult || !pdfBuffer || !fileName || !submitterEmail || !cityPlannerEmail) {
+        if (!reviewResult || !blobUrl || !fileName || !submitterEmail || !cityPlannerEmail) {
             console.error('[Email] Missing required fields:', {
                 hasReviewResult: !!reviewResult,
-                hasPdfBuffer: !!pdfBuffer,
+                hasBlobUrl: !!blobUrl,
                 hasFileName: !!fileName,
                 hasSubmitterEmail: !!submitterEmail,
                 hasCityPlannerEmail: !!cityPlannerEmail
@@ -120,9 +120,40 @@ export async function POST(req: NextRequest) {
             );
         }
 
+        // Fetch the PDF from the Blob URL
+        console.log('[Email] Fetching PDF from Blob URL:', blobUrl);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+        let pdfBuffer;
+        try {
+            const response = await fetch(blobUrl, {
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to fetch blob: ${response.statusText}`);
+            }
+
+            const buffer = await response.arrayBuffer();
+            pdfBuffer = Buffer.from(buffer);
+            clearTimeout(timeoutId);
+
+            console.log('[Email] Successfully fetched PDF from Blob:', {
+                fileSize: pdfBuffer.length,
+                fileSizeMB: (pdfBuffer.length / (1024 * 1024)).toFixed(2)
+            });
+        } catch (fetchError) {
+            console.error('[Email] Failed to fetch PDF from Blob:', fetchError);
+            return NextResponse.json(
+                { error: 'Failed to fetch PDF from Blob: ' + (fetchError instanceof Error ? fetchError.message : 'Unknown error') },
+                { status: 500 }
+            );
+        }
+
         const attachment = {
             filename: fileName,
-            content: Buffer.from(pdfBuffer, 'base64'),
+            content: pdfBuffer,
             contentType: 'application/pdf',
         };
 
