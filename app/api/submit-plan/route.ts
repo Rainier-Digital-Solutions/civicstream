@@ -154,17 +154,7 @@ async function processSubmission(req: NextRequest) {
           });
           errorMessage = errorData.error || errorMessage;
         } catch (parseError) {
-          // If response is not JSON, try to get text
-          try {
-            const text = await emailResponse.text();
-            console.error('[API] Email sending failed with non-JSON response:', {
-              status: emailResponse.status,
-              statusText: emailResponse.statusText,
-              responseText: text.substring(0, 200) // Log first 200 chrs to avoid huge logs
-            });
-          } catch (textError) {
-            console.error('[API] Could not read error response:', textError);
-          }
+          console.error('[API] Could not parse error response:', parseError);
         }
         throw new Error(`Failed to send email: ${errorMessage}`);
       }
