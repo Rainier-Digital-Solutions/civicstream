@@ -62,13 +62,28 @@ async function processSubmission(req: NextRequest) {
 
     try {
       console.log('[API] Starting fetch request...');
+      console.log('[API] Environment:', process.env.NODE_ENV);
+      console.log('[API] Vercel Environment:', process.env.VERCEL_ENV);
+
+      // Add headers to help with CORS and caching
       const response = await fetch(blobUrl, {
-        signal: controller.signal
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/pdf',
+          'Cache-Control': 'no-cache'
+        },
+        // Add credentials for preview environment
+        credentials: process.env.VERCEL_ENV === 'preview' ? 'include' : 'same-origin'
       });
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch file from Blob: ${response.statusText}`);
+        console.error('[API] Fetch failed:', {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers.entries())
+        });
+        throw new Error(`Failed to fetch file from Blob: ${response.status} ${response.statusText}`);
       }
 
       console.log('[API] Fetch successful, getting content length...');
