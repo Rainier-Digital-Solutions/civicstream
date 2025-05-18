@@ -1,6 +1,14 @@
 import { put } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 
+export const config = {
+    api: {
+        bodyParser: {
+            sizeLimit: '100mb'
+        }
+    }
+};
+
 export async function POST(req: Request) {
     try {
         const formData = await req.formData();
