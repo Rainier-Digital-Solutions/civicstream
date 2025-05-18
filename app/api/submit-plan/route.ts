@@ -79,47 +79,71 @@ async function processSubmission(req: NextRequest) {
       console.log(`[API] PDF chunked into ${chunks.length} parts`);
       logMemoryUsage();
 
-      // Combine all chunks into a single review request
-      console.log('[API] Combining chunks for single review...');
-      const combinedBase64 = chunks.map(chunk => chunk.base64).join('\n\n');
+      // Process chunks in batches for OpenAI
+      const BATCH_SIZE = 3; // Process 3 chunks at a time
+      const results = [];
 
-      const projectDetails = {
-        address,
-        parcelNumber,
-        city,
-        county,
-        projectSummary: projectSummary || undefined
+      for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+        const batchChunks = chunks.slice(i, i + BATCH_SIZE);
+        console.log(`[API] Processing batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(chunks.length / BATCH_SIZE)}`);
+
+        // Combine chunks in this batch
+        const batchBase64 = batchChunks.map(chunk => chunk.base64).join('\n\n');
+
+        const projectDetails = {
+          address,
+          parcelNumber,
+          city,
+          county,
+          projectSummary: projectSummary || undefined
+        };
+
+        try {
+          const reviewResult = await reviewArchitecturalPlan(batchBase64, projectDetails);
+          results.push(reviewResult);
+
+          console.log(`[API] Batch ${Math.floor(i / BATCH_SIZE) + 1} review completed:`, {
+            isCompliant: reviewResult.isCompliant,
+            totalFindings: reviewResult.totalFindings
+          });
+          logMemoryUsage();
+        } catch (error) {
+          console.error(`[API] Error processing batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error);
+          throw error;
+        }
+      }
+
+      // Combine results from all batches
+      const combinedResult = {
+        summary: results.map(r => r.summary).join('\n\n'),
+        criticalFindings: results.flatMap(r => r.criticalFindings),
+        majorFindings: results.flatMap(r => r.majorFindings),
+        minorFindings: results.flatMap(r => r.minorFindings),
+        totalFindings: results.reduce((sum, r) => sum + r.totalFindings, 0),
+        isCompliant: results.every(r => r.isCompliant),
+        cityPlannerEmailBody: results.map(r => r.cityPlannerEmailBody).join('\n\n'),
+        submitterEmailBody: results.map(r => r.submitterEmailBody).join('\n\n')
       };
 
-      try {
-        const reviewResult = await reviewArchitecturalPlan(combinedBase64, projectDetails);
+      console.log('[API] All batches processed:', {
+        isCompliant: combinedResult.isCompliant,
+        totalFindings: combinedResult.totalFindings
+      });
+      logMemoryUsage();
 
-        console.log('[API] Review completed:', {
-          isCompliant: reviewResult.isCompliant,
-          totalFindings: reviewResult.totalFindings
-        });
-        logMemoryUsage();
+      // Route the email based on the review results
+      await routeReviewResults(
+        combinedResult,
+        buffer,
+        new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
+        submitterEmail,
+        cityPlannerEmail
+      );
 
-        // Route the email based on the review results
-        await routeReviewResults(
-          reviewResult,
-          buffer,
-          new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
-          submitterEmail,
-          cityPlannerEmail
-        );
+      // Clean up the Blob
+      await del(blobUrl);
 
-        // Clean up the Blob
-        await del(blobUrl);
-
-        return NextResponse.json({ success: true });
-      } catch (error) {
-        console.error('[API] Error processing submission:', error);
-        return NextResponse.json(
-          { error: 'Failed to process submission: ' + (error instanceof Error ? error.message : 'Unknown error') },
-          { status: 500 }
-        );
-      }
+      return NextResponse.json({ success: true });
     } catch (error) {
       console.error('[API] Error processing submission:', error);
       return NextResponse.json(
