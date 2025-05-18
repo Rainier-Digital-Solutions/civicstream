@@ -6,6 +6,7 @@ import { del, list, put } from '@vercel/blob';
 import * as vercelBlob from '@vercel/blob';
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'edge';
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 export const config = {
