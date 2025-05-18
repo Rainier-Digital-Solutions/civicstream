@@ -4,12 +4,11 @@ import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+import * as z from 'zod';
 import { FileWithPreview } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { validatePDF, getFileSizeInMB } from '@/lib/pdf-utils';
-
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
@@ -37,10 +36,13 @@ function generateFileId(): string {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
+// Simplified submission status type
+type SubmissionStatusType = 'idle' | 'uploading' | 'success' | 'error';
+
 export function SubmissionForm() {
   const [file, setFile] = useState<FileWithPreview | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'uploading' | 'processing' | 'success' | 'error'>('idle');
+  const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatusType>('idle');
   const [uploadProgress, setUploadProgress] = useState(0);
   const { toast } = useToast();
 
@@ -257,15 +259,18 @@ export function SubmissionForm() {
 
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
 
-      // Send the submission - but don't wait for processing to complete
-      fetch(`${baseUrl}/api/submit-plan`, {
+      // Send the submission but don't wait for processing
+      const response = await fetch(`${baseUrl}/api/submit-plan`, {
         method: 'POST',
         body: submissionFormData,
-      }).catch(error => {
-        console.error('Error submitting plan:', error);
       });
 
-      // Set success immediately after triggering the submission
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to submit plan');
+      }
+
+      // Show success immediately
       setSubmissionStatus('success');
 
       toast({
@@ -368,7 +373,7 @@ export function SubmissionForm() {
                 </div>
 
                 {/* Upload progress bar */}
-                {isSubmitting && uploadProgress > 0 && (
+                {isSubmitting && uploadProgress > 0 && submissionStatus === 'uploading' && (
                   <div className="space-y-2">
                     <Progress value={uploadProgress} />
                     <p className="text-xs text-muted-foreground text-center">

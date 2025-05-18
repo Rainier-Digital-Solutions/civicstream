@@ -17,26 +17,63 @@ const TIMEOUT_MS = 300000; // 5 minutes
 const BATCH_SIZE = 5;
 const MAX_SINGLE_REQUEST_SIZE = 2000000; // Maximum size in bytes for single request (~2MB)
 
+// Helper to check environment variables
+function validateEnvironment() {
+    const issues = [];
+
+    if (!process.env.OPENAI_API_KEY) {
+        issues.push('OPENAI_API_KEY is missing');
+    }
+
+    if (!process.env.NEXT_PUBLIC_API_BASE_URL) {
+        issues.push('NEXT_PUBLIC_API_BASE_URL is missing');
+    }
+
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        issues.push('BLOB_READ_WRITE_TOKEN may be missing (required for Vercel Blob operations)');
+    }
+
+    return {
+        isValid: issues.length === 0,
+        issues
+    };
+}
+
 export async function POST(req: NextRequest) {
     console.log('[ProcessPlan] Received submission request');
 
-    // Start the processing in the background without awaiting
-    processSubmission(req).catch((error) => {
-        console.error('[ProcessPlan] Unhandled error in background processing:', error);
-    });
+    try {
+        // Validate environment variables first
+        const envCheck = validateEnvironment();
+        if (!envCheck.isValid) {
+            console.error('[ProcessPlan] Environment issues detected:', envCheck.issues);
+        }
 
-    // Return success immediately to the client
-    console.log('[ProcessPlan] Returning success response to client, background processing started');
-    return NextResponse.json({ success: true });
+        // Parse the request to get an ID for tracking
+        const body = await req.json();
+
+        // Start the processing in the background without awaiting
+        processSubmission(body).catch((error) => {
+            console.error('[ProcessPlan] Unhandled error in background processing:', error);
+        });
+
+        // Return success immediately to the client
+        console.log('[ProcessPlan] Returning success response to client, background processing started');
+        return NextResponse.json({ success: true });
+    } catch (parseError) {
+        console.error('[ProcessPlan] Failed to parse request:', parseError);
+        return NextResponse.json(
+            { success: false, error: 'Failed to parse request' },
+            { status: 400 }
+        );
+    }
 }
 
-async function processSubmission(req: NextRequest) {
+async function processSubmission(body: any) {
     console.log('[ProcessPlan] Starting background plan processing');
 
     try {
-        console.log('[ProcessPlan] Parsing request body');
-        const body = await req.json();
-        console.log('[ProcessPlan] Request body parsed successfully');
+        console.log('[ProcessPlan] Using parsed request body');
 
         const {
             blobUrl,
@@ -63,18 +100,27 @@ async function processSubmission(req: NextRequest) {
         });
 
         if (!blobUrl) {
-            console.error('[ProcessPlan] Missing blobUrl');
+            console.error('[ProcessPlan] Missing blobUrl parameter');
             return;
         }
 
         if (!submitterEmail || !cityPlannerEmail || !address || !parcelNumber || !city || !county) {
-            console.error('[ProcessPlan] Missing required fields');
+            const missingFields = [];
+            if (!submitterEmail) missingFields.push('submitterEmail');
+            if (!cityPlannerEmail) missingFields.push('cityPlannerEmail');
+            if (!address) missingFields.push('address');
+            if (!parcelNumber) missingFields.push('parcelNumber');
+            if (!city) missingFields.push('city');
+            if (!county) missingFields.push('county');
+
+            console.error(`[ProcessPlan] Missing required fields: ${missingFields.join(', ')}`);
             return;
         }
 
         // Check if OpenAI API key is configured
         if (!process.env.OPENAI_API_KEY) {
             console.error('[ProcessPlan] OPENAI_API_KEY is not configured in environment variables');
+            return;
         } else {
             console.log('[ProcessPlan] OPENAI_API_KEY is configured (length:', process.env.OPENAI_API_KEY.length, ')');
         }
@@ -200,6 +246,7 @@ async function processSubmission(req: NextRequest) {
 
                     // Phase 2: Process the consolidated metadata in a single request
                     console.log('[ProcessPlan] Phase 2: Processing consolidated metadata');
+
                     reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
                     console.log('[ProcessPlan] Two-phase review completed:', {
                         isCompliant: reviewResult.isCompliant,
@@ -239,7 +286,7 @@ async function processSubmission(req: NextRequest) {
                         blobUrl: blobUrl,
                         fileName: new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
                         submitterEmail,
-                        cityPlannerEmail,
+                        cityPlannerEmail
                     }),
                 });
 
