@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { ReviewResult } from '@/lib/openai';
-// Use Node.js runtime for this route
+
+// Force Node.js runtime and dynamic execution
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const preferredRegion = 'auto';
 
 // Email configuration
 const isSecure = process.env.EMAIL_SECURE === 'true';
