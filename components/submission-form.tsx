@@ -239,6 +239,9 @@ export function SubmissionForm() {
         throw new Error('Invalid upload response');
       }
 
+      // At this point the file is successfully uploaded
+      setUploadProgress(100);
+
       // Submit form data with blob URL
       const submissionFormData = new FormData();
       submissionFormData.append('blobUrl', blobUrl);
@@ -252,30 +255,28 @@ export function SubmissionForm() {
         submissionFormData.append('projectSummary', data.projectSummary);
       }
 
-      setSubmissionStatus('processing');
-      setUploadProgress(100);
-
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
-      const submitResponse = await fetch(`${baseUrl}/api/submit-plan`, {
+
+      // Send the submission - but don't wait for processing to complete
+      fetch(`${baseUrl}/api/submit-plan`, {
         method: 'POST',
         body: submissionFormData,
+      }).catch(error => {
+        console.error('Error submitting plan:', error);
       });
 
-      if (!submitResponse.ok) {
-        const errorData = await submitResponse.json();
-        throw new Error(errorData.error || 'Failed to submit plan');
-      }
-
+      // Set success immediately after triggering the submission
       setSubmissionStatus('success');
 
       toast({
         title: 'Plan submitted successfully',
-        description: 'You will receive the results via email',
+        description: 'You will receive the results via email once processing is complete',
       });
 
       // Reset form
       form.reset();
       setFile(null);
+
     } catch (error) {
       console.error('Error submitting plan:', error);
       setSubmissionStatus('error');
@@ -374,8 +375,8 @@ export function SubmissionForm() {
                       {uploadProgress < 95
                         ? `Uploading: ${uploadProgress}%`
                         : uploadProgress === 100
-                          ? 'Processing plan...'
-                          : 'Preparing submission...'}
+                          ? 'Upload complete!'
+                          : 'Finalizing upload...'}
                     </p>
                   </div>
                 )}
@@ -502,12 +503,6 @@ export function SubmissionForm() {
                           <>
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             Uploading...
-                          </>
-                        )}
-                        {submissionStatus === 'processing' && (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Processing...
                           </>
                         )}
                         {submissionStatus === 'success' && (
