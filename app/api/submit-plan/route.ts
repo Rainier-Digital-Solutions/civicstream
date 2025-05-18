@@ -36,9 +36,12 @@ export async function POST(req: NextRequest) {
 
     // Instead of processing here, send to the background process endpoint
     const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+    const processPlanUrl = `${baseUrl}/api/process-plan`;
+
+    console.log(`[API] Attempting to trigger background processing at: ${processPlanUrl}`);
 
     // Fire and forget - don't await this promise
-    fetch(`${baseUrl}/api/process-plan`, {
+    fetch(processPlanUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -53,11 +56,23 @@ export async function POST(req: NextRequest) {
         county,
         projectSummary
       }),
-    }).catch(error => {
-      console.error('[API] Error triggering background processing:', error);
-    });
+    })
+      .then(response => {
+        // Log basic response info even for fire-and-forget for debugging
+        console.log(`[API] Background process trigger HTTP status: ${response.status}`);
+        if (!response.ok) {
+          response.text().then(text => {
+            console.error(`[API] Background process trigger failed with status ${response.status}: ${text}`);
+          }).catch(err => {
+            console.error(`[API] Background process trigger failed with status ${response.status}, and couldn't parse error text: ${err}`);
+          });
+        }
+      })
+      .catch(error => {
+        console.error(`[API] Error triggering background processing fetch for URL ${processPlanUrl}:`, error);
+      });
 
-    console.log('[API] Submission accepted and background processing started');
+    console.log('[API] Submission accepted and background processing started (fetch initiated).');
 
     // Return success immediately
     return NextResponse.json({ success: true });
