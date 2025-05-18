@@ -57,54 +57,69 @@ async function processSubmission(req: NextRequest) {
 
     // Fetch the file from Blob
     console.log('[API] Fetching file from Blob:', blobUrl);
-    const response = await fetch(blobUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch file from Blob: ${response.statusText}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Chunk the PDF
-    console.log('[API] Chunking PDF...');
-    const chunks = await chunkPDF(buffer);
-    console.log(`[API] PDF chunked into ${chunks.length} parts`);
-    logMemoryUsage();
-
-    // Combine all chunks into a single review request
-    console.log('[API] Combining chunks for single review...');
-    const combinedBase64 = chunks.map(chunk => chunk.base64).join('\n\n');
-
-    const projectDetails = {
-      address,
-      parcelNumber,
-      city,
-      county,
-      projectSummary: projectSummary || undefined
-    };
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-      const reviewResult = await reviewArchitecturalPlan(combinedBase64, projectDetails);
-
-      console.log('[API] Review completed:', {
-        isCompliant: reviewResult.isCompliant,
-        totalFindings: reviewResult.totalFindings
+      const response = await fetch(blobUrl, {
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch file from Blob: ${response.statusText}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      // Chunk the PDF
+      console.log('[API] Chunking PDF...');
+      const chunks = await chunkPDF(buffer);
+      console.log(`[API] PDF chunked into ${chunks.length} parts`);
       logMemoryUsage();
 
-      // Route the email based on the review results
-      await routeReviewResults(
-        reviewResult,
-        buffer,
-        new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
-        submitterEmail,
-        cityPlannerEmail
-      );
+      // Combine all chunks into a single review request
+      console.log('[API] Combining chunks for single review...');
+      const combinedBase64 = chunks.map(chunk => chunk.base64).join('\n\n');
 
-      // Clean up the Blob
-      await del(blobUrl);
+      const projectDetails = {
+        address,
+        parcelNumber,
+        city,
+        county,
+        projectSummary: projectSummary || undefined
+      };
 
-      return NextResponse.json({ success: true });
+      try {
+        const reviewResult = await reviewArchitecturalPlan(combinedBase64, projectDetails);
+
+        console.log('[API] Review completed:', {
+          isCompliant: reviewResult.isCompliant,
+          totalFindings: reviewResult.totalFindings
+        });
+        logMemoryUsage();
+
+        // Route the email based on the review results
+        await routeReviewResults(
+          reviewResult,
+          buffer,
+          new URL(blobUrl).pathname.split('/').pop() || 'plan.pdf',
+          submitterEmail,
+          cityPlannerEmail
+        );
+
+        // Clean up the Blob
+        await del(blobUrl);
+
+        return NextResponse.json({ success: true });
+      } catch (error) {
+        console.error('[API] Error processing submission:', error);
+        return NextResponse.json(
+          { error: 'Failed to process submission: ' + (error instanceof Error ? error.message : 'Unknown error') },
+          { status: 500 }
+        );
+      }
     } catch (error) {
       console.error('[API] Error processing submission:', error);
       return NextResponse.json(
