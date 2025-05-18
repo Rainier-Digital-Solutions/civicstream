@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { reviewArchitecturalPlan } from '@/lib/openai';
 import { chunkPDF } from '@/lib/pdf-utils';
-import { del, list, put } from '@vercel/blob';
+import { del } from '@vercel/blob';
 import * as vercelBlob from '@vercel/blob';
 
 export const dynamic = 'force-dynamic';

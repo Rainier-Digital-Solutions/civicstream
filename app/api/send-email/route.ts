@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 
 // Email configuration
-const isSecure = process.env.EMAIL_SECURE === 'true';
+const isSecure = process.env.EMAIL_SECUgRE === 'true';
 const emailConfig = {
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
     port: isSecure ? 465 : 587,
@@ -19,7 +19,7 @@ const emailConfig = {
 };
 
 const transporter = nodemailer.createTransport(emailConfig);
-
+console.log('[Email] Transporter created:', transporter);
 export async function POST(req: NextRequest) {
     console.log('[Email] Received email request');
 
