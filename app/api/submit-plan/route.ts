@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       formDataSize: JSON.stringify(Object.fromEntries(formData)).length,
       processingTime: `${Date.now() - startTime}ms`
     });
-
+    
     if (!blobUrl) {
       logWithContext('error', 'Missing blobUrl', { requestId });
       return NextResponse.json(
@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
       requestId,
       totalProcessingTime: `${Date.now() - startTime}ms`
     });
-
+    logMemoryUsage();
     return NextResponse.json({ success: true });
   } catch (error) {
     logWithContext('error', 'Error processing submission', {

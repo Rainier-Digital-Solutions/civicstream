@@ -81,7 +81,6 @@ export function SubmissionForm() {
         });
         return;
       }
-
       // Validate PDF
       validatePDF(file).then(isValid => {
         if (!isValid) {
@@ -96,7 +95,6 @@ export function SubmissionForm() {
         const fileWithPreview = Object.assign(file, {
           preview: URL.createObjectURL(file),
         });
-
         setFile(fileWithPreview);
       });
     }

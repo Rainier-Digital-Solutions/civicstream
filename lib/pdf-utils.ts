@@ -75,6 +75,7 @@ export async function chunkPagesByTokens(pages: { text: string; pageNumber: numb
             page.text;
 
         const tokenCount = countTokens(tentativeText);
+      
         const shouldCreateNewChunk =
             tokenCount > MAX_TOKENS_PER_CHUNK ||
             currentChunk.pageNumbers.length >= MAX_PAGES_PER_CHUNK;
