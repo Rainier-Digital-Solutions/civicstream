@@ -7,10 +7,11 @@ import { Toaster } from "@/components/ui/toaster";
 const inter = Inter({ subsets: ['latin'] });
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+const SITE_DESCRIPTION = 'AI-powered platform that streamlines municipal building permit reviews, reducing delays and costs through automated compliance checking of architectural plans against building codes and regulations.';
 
 export const metadata: Metadata = {
   title: 'CivicStream - Architectural Plan Review',
-  description: 'Automated compliance review for architectural plans',
+  description: SITE_DESCRIPTION,
   keywords: ['architectural plans', 'compliance review', 'building codes', 'construction', 'architecture'],
   authors: [{ name: 'CivicStream' }],
   creator: 'CivicStream',
@@ -26,7 +27,7 @@ export const metadata: Metadata = {
     locale: 'en_US',
     url: BASE_URL,
     title: 'CivicStream - Architectural Plan Review',
-    description: 'Automated compliance review for architectural plans',
+    description: SITE_DESCRIPTION,
     siteName: 'CivicStream',
     images: [
       {
@@ -40,7 +41,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'CivicStream - Architectural Plan Review',
-    description: 'Automated compliance review for architectural plans',
+    description: SITE_DESCRIPTION,
     images: [`${BASE_URL}/opengraph-image.png`],
     creator: '@civicstream',
   },
