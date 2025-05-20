@@ -1,91 +1,75 @@
-# OpenAI Responses API Prototype for CivicStream
+# CivicStream
+
+CivicStream is an innovative architectural plan review system that leverages AI to streamline the building permit process. Our platform helps city planners and architects work together more efficiently by automating code compliance checks and providing clear, actionable feedback.
 
 ## Overview
 
-This prototype demonstrates how to use OpenAI's Responses API for the CivicStream architectural plan review system. It provides the same functionality as our current implementation but leverages OpenAI's newer API that natively handles:
+CivicStream uses OpenAI's Responses API to analyze architectural plans and provide comprehensive code compliance reviews. The system:
 
-1. **File uploads** - directly to OpenAI without manual chunking
-2. **Web search capabilities** - without requiring SERPAPI integration
-3. **Conversation state management** - within a single API call
+- Automatically reviews architectural plans for code compliance
+- Provides detailed feedback with specific code references
+- Generates professional email communications
+- Integrates with existing city planning workflows
 
-## Implementation Details
+## Key Features
 
-The prototype consists of:
+- **Automated Plan Review**: AI-powered analysis of architectural plans
+- **Code Compliance**: Checks against local building codes and regulations
+- **Professional Communication**: Automated email notifications for both planners and submitters
+- **Web Search Integration**: Real-time access to building codes and regulations
+- **File Handling**: Native support for PDF plan uploads and processing
 
-- `lib/openai.ts`: Added a new function `reviewPlanWithResponsesAPI`
-- `app/api/plan-review-responses/route.ts`: New API route for handling plan reviews
-- `app/api/test-responses-api/route.ts`: Test route to verify the implementation
-- `app/api/send-email/route.ts`: Updated to support direct base64 file uploads
-- `public/sample-plans.pdf`: Sample PDF for testing
+## Getting Started
 
-## Testing Instructions
+### Prerequisites
 
-### Using the Test API Endpoint
+- Node.js 18+
+- OpenAI API key
+- Development environment
 
-1. Start the development server:
+### Quick Start
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Rainier-Digital-Solutions/civicstream.git
+   cd civic-stream
    ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Set up environment variables:
+   ```bash
+   cp .env.example .env.local
+   # Edit .env.local with your OpenAI API key
+   ```
+
+4. Start the development server:
+   ```bash
    npm run dev
    ```
 
-2. Access the test endpoint:
-   ```
-   curl http://localhost:3000/api/test-responses-api
-   ```
+## Documentation
 
-This will:
-- Load a sample PDF from the public directory
-- Submit it to the Responses API prototype
-- Return the results
+Our documentation is organized into several key sections:
 
-### Direct API Testing
+- [Implementation Guide](docs/responses-api-implementation.md) - Detailed implementation architecture and setup
+- [API Reference](docs/responses-api-reference.md) - Complete API documentation and specifications
+- [Testing Guide](docs/responses-api-testing.md) - Testing procedures and validation
+- [Migration Guide](docs/responses-api-migration.md) - Migration strategy and procedures
 
-#### Form Data Upload:
-```javascript
-const formData = new FormData();
-formData.append('file', pdfFile);
-formData.append('submitterEmail', 'test@example.com');
-formData.append('cityPlannerEmail', 'cityplanner@example.com');
-formData.append('address', '123 Test Street');
-formData.append('parcelNumber', '123456-7890');
-formData.append('city', 'Seattle');
-formData.append('county', 'King County');
+## Support
 
-fetch('/api/plan-review-responses', {
-  method: 'POST',
-  body: formData
-})
-```
+For support, please:
+1. Check our [documentation](docs/)
+2. Open an issue on GitHub
+3. Contact our support team at support@civicstream.com
 
-#### Blob URL Upload:
-```javascript
-fetch('/api/plan-review-responses', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    blobUrl: 'https://your-blob-url.com/file.pdf',
-    submitterEmail: 'test@example.com',
-    cityPlannerEmail: 'cityplanner@example.com',
-    address: '123 Test Street',
-    parcelNumber: '123456-7890',
-    city: 'Seattle',
-    county: 'King County'
-  })
-})
-```
 
-## Key Advantages
+## About CivicStream
 
-1. **Simplified Code** - Reduces code complexity by handling file uploads and web search natively
-2. **Reduced Dependencies** - Eliminates the need for SERPAPI integration
-3. **Improved Reliability** - Uses OpenAI's built-in file handling capabilities
-4. **Easier Maintenance** - Single API call reduces state management complexity
+CivicStream is dedicated to modernizing the building permit process through AI-powered automation. Our mission is to make the permitting process more efficient, transparent, and accessible for both city planners and architects.
 
-## Next Steps
-
-- Compare performance metrics between implementations
-- Conduct thorough testing with real architectural plans
-- Decide whether to fully migrate to the Responses API
-
-For detailed documentation, see `docs/responses-api-prototype.md`. 
+Learn more about us at [civicstream.com](https://www.civicstream.com) 
