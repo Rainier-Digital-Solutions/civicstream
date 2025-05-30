@@ -440,7 +440,7 @@ Please extract key information from this architectural plan chunk. Do not perfor
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages,
-      max_tokens: 1000,
+      max_tokens: 10000,
       stream: false
     });
 
@@ -568,7 +568,7 @@ Please analyze the consolidated metadata from these architectural plans and use 
         messages: baseMessages,
         tools,
         tool_choice: "auto",
-        max_tokens: 4096,
+        max_tokens: 10000,
         stream: false
       });
 
@@ -616,7 +616,7 @@ Please analyze the consolidated metadata from these architectural plans and use 
           }
         ],
         stream: false,
-        max_tokens: 4096
+        max_tokens: 10000
       });
 
       const fullResponse = finalResponse.choices[0].message.content;
@@ -796,7 +796,7 @@ Please analyze the complete set of architectural plans and use the web_search to
         messages: baseMessages,
         tools,
         tool_choice: "auto",
-        max_tokens: 4096,
+        max_tokens: 10000,
         stream: false
       });
 
@@ -844,7 +844,7 @@ Please analyze the complete set of architectural plans and use the web_search to
           }
         ],
         stream: false,
-        max_tokens: 4096
+        max_tokens: 10000
       });
 
       const fullResponse = stream.choices[0].message.content;
