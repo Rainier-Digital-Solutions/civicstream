@@ -97,20 +97,32 @@ export async function POST(req: NextRequest) {
             blobUrlLength: body.blobUrl?.length
         });
 
-        // Process the submission synchronously for debugging
-        logWithContext('info', 'Starting synchronous processing', {
+        // Start background processing without awaiting
+        logWithContext('info', 'Starting background processing', {
             requestId,
             processingTime: `${Date.now() - startTime}ms`
         });
 
-        await processSubmission(body, requestId);
-
-        logWithContext('info', 'Processing completed', {
-            requestId,
-            totalProcessingTime: `${Date.now() - startTime}ms`
+        // Fire and forget - start processing in background
+        processSubmission(body, requestId).catch(error => {
+            logWithContext('error', 'Background processing failed', {
+                requestId,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                stack: error instanceof Error ? error.stack : undefined
+            });
         });
 
-        return NextResponse.json({ success: true, message: "Processing completed synchronously for debugging." });
+        logWithContext('info', 'Background processing initiated', {
+            requestId,
+            responseTime: `${Date.now() - startTime}ms`
+        });
+
+        // Return immediately while processing continues in background
+        return NextResponse.json({
+            success: true,
+            message: "Processing started in background. You will receive results via email once complete.",
+            requestId
+        });
 
     } catch (error) {
         logWithContext('error', 'Error in process plan request', {
