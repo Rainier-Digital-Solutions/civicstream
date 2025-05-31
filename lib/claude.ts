@@ -625,6 +625,29 @@ export async function reviewPlanWithClaude(
   console.log('[Claude] Starting architectural plan review');
   console.log('[Claude] PDF Buffer size:', pdfBuffer.length);
 
+  // Check file size limits - Claude cannot handle large files directly
+  const MAX_CLAUDE_BUFFER_SIZE = 5 * 1024 * 1024; // 5MB limit for Claude direct processing
+  
+  if (pdfBuffer.length > MAX_CLAUDE_BUFFER_SIZE) {
+    console.log('[Claude] PDF exceeds direct processing limit, falling back to chunking approach');
+    // Fall back to chunking approach for large files
+    const { chunkPDF } = await import('@/lib/pdf-utils');
+    const chunks = await chunkPDF(pdfBuffer);
+    
+    const metadataResults: PlanMetadata[] = [];
+    for (const chunk of chunks) {
+      try {
+        const metadata = await extractPlanMetadataWithClaude(chunk.content, projectDetails);
+        metadataResults.push(metadata);
+      } catch (error) {
+        console.error('[Claude] Error extracting metadata from chunk:', error);
+        // Continue with other chunks
+      }
+    }
+    
+    return await reviewWithMetadataWithClaude(metadataResults, projectDetails, maxRetries);
+  }
+
   let attempts = 0;
   let lastError: Error | null = null;
 
@@ -640,9 +663,21 @@ export async function reviewPlanWithClaude(
         `Title: ${result.title}\nURL: ${result.url}\nSnippet: ${result.snippet}`
       ).join('\n\n');
 
-      // Convert PDF buffer to a text representation for Claude
-      const pdfBase64 = pdfBuffer.toString('base64');
-      const pdfSummary = `PDF File: ${fileName}, Size: ${pdfBuffer.length} bytes, Base64 preview: ${pdfBase64.substring(0, 200)}...`;
+      // Since Claude cannot process PDFs directly, we need to extract text first
+      console.log('[Claude] Extracting text from PDF for analysis');
+      let pdfTextContent = '';
+      
+      try {
+        const { chunkPDF } = await import('@/lib/pdf-utils');
+        const chunks = await chunkPDF(pdfBuffer);
+        pdfTextContent = chunks.map(chunk => chunk.content).join('\n\n--- PAGE BREAK ---\n\n');
+        console.log('[Claude] Successfully extracted text from PDF, length:', pdfTextContent.length);
+      } catch (pdfError) {
+        console.error('[Claude] Failed to extract text from PDF:', pdfError);
+        // Fallback to metadata-based review
+        console.log('[Claude] Falling back to template-based review');
+        pdfTextContent = `Unable to extract text from PDF file "${fileName}". Performing template-based review for ${projectDetails.city}, ${projectDetails.county} based on typical residential requirements.`;
+      }
 
       const userMessage = `
 Project Details:
@@ -655,12 +690,12 @@ ${projectDetails.projectSummary ? `Project Summary: ${projectDetails.projectSumm
 BUILDING CODES AND REGULATIONS SEARCH RESULTS:
 ${searchResultsText}
 
-PDF CONTENT SUMMARY:
-${pdfSummary}
+EXTRACTED PDF TEXT CONTENT:
+${pdfTextContent.substring(0, 50000)}${pdfTextContent.length > 50000 ? '\n\n[Content truncated due to length limits]' : ''}
 
-Please analyze the architectural plans based on the project details and building codes found in the search results. Since I cannot directly view the PDF content, please provide a comprehensive review based on typical requirements for single-family residences in ${projectDetails.city}, ${projectDetails.county}, Washington. 
+Please analyze the architectural plans based on the extracted text content and building codes found in the search results. Generate a comprehensive review based on the actual content found in the plans and typical requirements for single-family residences in ${projectDetails.city}, ${projectDetails.county}, Washington. 
 
-You MUST generate at least 6-8 realistic findings and missing items for a typical residential project. Focus on:
+You MUST generate realistic findings and missing items based on what you can determine from the extracted text. Focus on:
 
 TYPICAL MISSING DOCUMENTS for ${projectDetails.city}, WA:
 1. Structural engineering calculations and plans
@@ -683,77 +718,90 @@ TYPICAL CODE COMPLIANCE ISSUES:
 Generate specific, realistic findings with proper code references (like "IRC Section 123.4" or "King County Code 21A.24.XXX"). Provide detailed review following the required JSON format with properly formatted HTML email bodies that include the full detailed findings list.`;
 
       console.log(`[Claude] Attempt ${attempts + 1}/${maxRetries}: Sending request to Claude`);
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 20000,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: COMPLIANCE_REVIEW_PROMPT
-              },
-              {
-                type: "text",
-                text: userMessage
-              }
-            ]
-          }
-        ]
-      });
-
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('No text response received from Claude');
-      }
-
-      console.log('[Claude] Raw response length:', content.text.length);
-
+      
+      // Add timeout handling like OpenAI implementation
+      const timeoutMs = 300000; // 5 minutes to match OpenAI timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      
       try {
-        // Preprocess content to remove markdown formatting
-        let processedContent = content.text;
+        const response = await anthropic.messages.create({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 20000,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: COMPLIANCE_REVIEW_PROMPT
+                },
+                {
+                  type: "text",
+                  text: userMessage
+                }
+              ]
+            }
+          ]
+        });
+        
+        clearTimeout(timeoutId);
 
-        // Strip out markdown code block delimiters if present
-        const jsonMatch = content.text.match(/```(?:json)?\s*([\s\S]*?)```/);
-        if (jsonMatch && jsonMatch[1]) {
-          processedContent = jsonMatch[1].trim();
+        const content = response.content[0];
+        if (content.type !== 'text') {
+          throw new Error('No text response received from Claude');
         }
 
-        console.log('[Claude] Processing raw response for JSON extraction');
-        const result = JSON.parse(processedContent);
-        console.log('[Claude] Successfully parsed JSON response');
+        console.log('[Claude] Raw response length:', content.text.length);
 
-        // Enhanced validation of the response structure
-        if (!result.summary || !Array.isArray(result.criticalFindings) ||
-          !Array.isArray(result.majorFindings) || !Array.isArray(result.minorFindings) ||
-          typeof result.totalFindings !== 'number' || typeof result.isCompliant !== 'boolean' ||
-          !result.cityPlannerEmailBody || !result.submitterEmailBody) {
-          throw new Error('Invalid response structure from AI');
+        try {
+          // Preprocess content to remove markdown formatting
+          let processedContent = content.text;
+
+          // Strip out markdown code block delimiters if present
+          const jsonMatch = content.text.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (jsonMatch && jsonMatch[1]) {
+            processedContent = jsonMatch[1].trim();
+          }
+
+          console.log('[Claude] Processing raw response for JSON extraction');
+          const result = JSON.parse(processedContent);
+          console.log('[Claude] Successfully parsed JSON response');
+
+          // Enhanced validation of the response structure
+          if (!result.summary || !Array.isArray(result.criticalFindings) ||
+            !Array.isArray(result.majorFindings) || !Array.isArray(result.minorFindings) ||
+            typeof result.totalFindings !== 'number' || typeof result.isCompliant !== 'boolean' ||
+            !result.cityPlannerEmailBody || !result.submitterEmailBody) {
+            throw new Error('Invalid response structure from AI');
+          }
+
+          return {
+            summary: result.summary,
+            missingPlans: result.missingPlans || [],
+            missingPermits: result.missingPermits || [],
+            missingDocumentation: result.missingDocumentation || [],
+            missingInspectionCertificates: result.missingInspectionCertificates || [],
+            criticalFindings: result.criticalFindings,
+            majorFindings: result.majorFindings,
+            minorFindings: result.minorFindings,
+            totalFindings: result.totalFindings,
+            isCompliant: result.isCompliant,
+            cityPlannerEmailBody: result.cityPlannerEmailBody,
+            submitterEmailBody: result.submitterEmailBody
+          };
+        } catch (parseError) {
+          console.error(`[Claude] Attempt ${attempts + 1} failed to parse JSON:`, parseError);
+          console.error('[Claude] Raw response that failed to parse:', content.text);
+          lastError = parseError instanceof Error ? parseError : new Error('Failed to parse AI response as JSON');
+
+          if (attempts === maxRetries - 1) {
+            return getDefaultErrorResponse();
+          }
         }
-
-        return {
-          summary: result.summary,
-          missingPlans: result.missingPlans || [],
-          missingPermits: result.missingPermits || [],
-          missingDocumentation: result.missingDocumentation || [],
-          missingInspectionCertificates: result.missingInspectionCertificates || [],
-          criticalFindings: result.criticalFindings,
-          majorFindings: result.majorFindings,
-          minorFindings: result.minorFindings,
-          totalFindings: result.totalFindings,
-          isCompliant: result.isCompliant,
-          cityPlannerEmailBody: result.cityPlannerEmailBody,
-          submitterEmailBody: result.submitterEmailBody
-        };
-      } catch (parseError) {
-        console.error(`[Claude] Attempt ${attempts + 1} failed to parse JSON:`, parseError);
-        console.error('[Claude] Raw response that failed to parse:', content.text);
-        lastError = parseError instanceof Error ? parseError : new Error('Failed to parse AI response as JSON');
-
-        if (attempts === maxRetries - 1) {
-          return getDefaultErrorResponse();
-        }
+      } catch (apiError) {
+        clearTimeout(timeoutId);
+        throw apiError;
       }
     } catch (error) {
       console.error(`[Claude] Attempt ${attempts + 1} failed with error:`, error);
