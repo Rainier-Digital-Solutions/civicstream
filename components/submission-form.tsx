@@ -13,6 +13,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Loader2, File, Upload, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 
@@ -24,6 +25,7 @@ const formSchema = z.object({
   city: z.string().min(1, 'City is required'),
   county: z.string().min(1, 'County is required'),
   projectSummary: z.string().optional(),
+  useClaude: z.boolean().default(true), // Default to Claude
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -256,6 +258,7 @@ export function SubmissionForm() {
       if (data.projectSummary) {
         submissionFormData.append('projectSummary', data.projectSummary);
       }
+      submissionFormData.append('useClaude', data.useClaude ? 'true' : 'false');
 
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
 
@@ -497,6 +500,29 @@ export function SubmissionForm() {
                         Provide a brief overview of your project (optional)
                       </FormDescription>
                       <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="useClaude"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <FormLabel className="text-base">
+                          Use Claude AI for Analysis
+                        </FormLabel>
+                        <FormDescription>
+                          Use Anthropic&apos;s Claude instead of OpenAI for plan review (recommended)
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
                     </FormItem>
                   )}
                 />
