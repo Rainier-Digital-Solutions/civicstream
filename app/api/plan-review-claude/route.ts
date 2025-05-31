@@ -8,7 +8,7 @@ import os from 'os';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const TIMEOUT_MS = 300000; // 5 minutes
+const TIMEOUT_MS = 600000; // 10 minutes
 
 export async function POST(req: NextRequest) {
     console.log('[Claude-API] Received plan review request');
