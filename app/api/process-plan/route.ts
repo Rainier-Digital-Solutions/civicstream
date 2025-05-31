@@ -18,6 +18,7 @@ import * as vercelBlob from '@vercel/blob';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+export const maxDuration = 300; // 5 minutes (Vercel Pro plan limit)
 
 const TIMEOUT_MS = 600000; // 10 minutes
 const BATCH_SIZE = 5;
