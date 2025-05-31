@@ -121,32 +121,41 @@ export async function POST(req: NextRequest) {
             blobUrlLength: body.blobUrl?.length
         });
 
-        // Start background processing without awaiting
-        logWithContext('info', 'Starting background processing', {
+        // Process synchronously and wait for completion
+        logWithContext('info', 'Starting synchronous processing', {
             requestId,
             processingTime: `${Date.now() - startTime}ms`
         });
 
-        // Fire and forget - start processing in background
-        processSubmission(body, requestId).catch(error => {
-            logWithContext('error', 'Background processing failed', {
+        try {
+            await processSubmission(body, requestId);
+
+            logWithContext('info', 'Processing completed successfully', {
                 requestId,
-                error: error instanceof Error ? error.message : 'Unknown error',
-                stack: error instanceof Error ? error.stack : undefined
+                responseTime: `${Date.now() - startTime}ms`
             });
-        });
 
-        logWithContext('info', 'Background processing initiated', {
-            requestId,
-            responseTime: `${Date.now() - startTime}ms`
-        });
+            return NextResponse.json({
+                success: true,
+                message: "Plan review completed successfully. Check your email for results.",
+                requestId
+            });
 
-        // Return immediately while processing continues in background
-        return NextResponse.json({
-            success: true,
-            message: "Processing started in background. You will receive results via email once complete.",
-            requestId
-        });
+        } catch (processingError) {
+            logWithContext('error', 'Processing failed', {
+                requestId,
+                error: processingError instanceof Error ? processingError.message : 'Unknown error',
+                stack: processingError instanceof Error ? processingError.stack : undefined,
+                responseTime: `${Date.now() - startTime}ms`
+            });
+
+            return NextResponse.json({
+                success: false,
+                message: "Plan review failed. Please try again or contact support.",
+                requestId,
+                error: processingError instanceof Error ? processingError.message : 'Unknown error'
+            }, { status: 500 });
+        }
 
     } catch (error) {
         logWithContext('error', 'Error in process plan request', {
@@ -273,7 +282,7 @@ async function processSubmission(body: any, requestId: string) {
                     const reviewStartTime = Date.now();
 
                     if (useClaude) {
-                        logWithContext('info', 'Using Claude API for PDF review from URL', { 
+                        logWithContext('info', 'Using Claude API for PDF review from URL', {
                             requestId,
                             anthropicKeyPresent: !!process.env.ANTHROPIC_API_KEY,
                             perplexityKeyPresent: !!process.env.PERPLEXITY_API_KEY,
@@ -443,9 +452,9 @@ async function processSubmission(body: any, requestId: string) {
                 const reviewStartTime = Date.now();
 
                 if (useClaude) {
-                    logWithContext('info', 'Using Claude for metadata review', { 
+                    logWithContext('info', 'Using Claude for metadata review', {
                         requestId,
-                        metadataCount: metadataResults.length 
+                        metadataCount: metadataResults.length
                     });
                     try {
                         reviewResult = await reviewWithMetadataWithClaude(metadataResults as ClaudePlanMetadata[], projectDetails);
