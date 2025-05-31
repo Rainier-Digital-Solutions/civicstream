@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
     const city = formData.get('city') as string;
     const county = formData.get('county') as string;
     const projectSummary = formData.get('projectSummary') as string | null;
+    const useClaude = formData.get('useClaude') === 'true';
 
     logWithContext('info', 'Extracted form fields', {
       requestId,
@@ -113,7 +114,8 @@ export async function POST(req: NextRequest) {
           parcelNumber,
           city,
           county,
-          projectSummary
+          projectSummary,
+          useClaude
         }),
       });
 

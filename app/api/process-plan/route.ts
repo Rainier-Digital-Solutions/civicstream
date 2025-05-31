@@ -6,6 +6,12 @@ import {
     PlanMetadata,
     reviewPlanWithResponsesAPI
 } from '@/lib/openai';
+import {
+    reviewPlanWithClaude,
+    extractPlanMetadataWithClaude,
+    reviewWithMetadataWithClaude,
+    PlanMetadata as ClaudePlanMetadata
+} from '@/lib/claude';
 import { chunkPDF } from '@/lib/pdf-utils';
 import { del } from '@vercel/blob';
 import * as vercelBlob from '@vercel/blob';
@@ -152,7 +158,8 @@ async function processSubmission(body: any, requestId: string) {
             parcelNumber,
             city,
             county,
-            projectSummary
+            projectSummary,
+            useClaude = false // Optional parameter to use Claude instead of OpenAI
         } = body;
 
         logWithContext('info', 'Extracted request parameters', {
@@ -165,7 +172,8 @@ async function processSubmission(body: any, requestId: string) {
             hasParcelNumber: !!parcelNumber,
             hasCity: !!city,
             hasCounty: !!county,
-            hasProjectSummary: !!projectSummary
+            hasProjectSummary: !!projectSummary,
+            useClaude
         });
 
         if (!blobUrl) {
@@ -245,14 +253,22 @@ async function processSubmission(body: any, requestId: string) {
 
                 try {
                     const reviewStartTime = Date.now();
-                    reviewResult = await reviewPlanWithResponsesAPI(pdfBuffer, fileName, projectDetails);
+                    
+                    if (useClaude) {
+                        logWithContext('info', 'Using Claude API for PDF review', { requestId });
+                        reviewResult = await reviewPlanWithClaude(pdfBuffer, fileName, projectDetails);
+                    } else {
+                        logWithContext('info', 'Using OpenAI Responses API for PDF review', { requestId });
+                        reviewResult = await reviewPlanWithResponsesAPI(pdfBuffer, fileName, projectDetails);
+                    }
 
                     logWithContext('info', 'PDF review completed', {
                         requestId,
                         reviewTime: `${Date.now() - reviewStartTime}ms`,
                         isCompliant: reviewResult.isCompliant,
                         totalFindings: reviewResult.totalFindings,
-                        hasEmailBody: !!reviewResult.submitterEmailBody
+                        hasEmailBody: !!reviewResult.submitterEmailBody,
+                        usedClaude: useClaude
                     });
 
                 } catch (error) {
@@ -285,15 +301,25 @@ async function processSubmission(body: any, requestId: string) {
                         });
 
                         const batchPromises = batchChunks.map(chunk =>
-                            extractPlanMetadata(chunk.base64, projectDetails)
-                                .catch((e: Error) => {
-                                    logWithContext('error', 'Error extracting metadata from chunk', {
-                                        requestId,
-                                        error: e.message,
-                                        stack: e.stack
-                                    });
-                                    return null;
-                                })
+                            useClaude ? 
+                                extractPlanMetadataWithClaude(chunk.content, projectDetails)
+                                    .catch((e: Error) => {
+                                        logWithContext('error', 'Error extracting metadata from chunk with Claude', {
+                                            requestId,
+                                            error: e.message,
+                                            stack: e.stack
+                                        });
+                                        return null;
+                                    }) :
+                                extractPlanMetadata(chunk.base64, projectDetails)
+                                    .catch((e: Error) => {
+                                        logWithContext('error', 'Error extracting metadata from chunk with OpenAI', {
+                                            requestId,
+                                            error: e.message,
+                                            stack: e.stack
+                                        });
+                                        return null;
+                                    })
                         );
 
                         const batchResults = await Promise.all(batchPromises);
@@ -307,13 +333,19 @@ async function processSubmission(body: any, requestId: string) {
                     }
 
                     const reviewStartTime = Date.now();
-                    reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
+                    
+                    if (useClaude) {
+                        reviewResult = await reviewWithMetadataWithClaude(metadataResults as ClaudePlanMetadata[], projectDetails);
+                    } else {
+                        reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
+                    }
 
                     logWithContext('info', 'Metadata review completed', {
                         requestId,
                         reviewTime: `${Date.now() - reviewStartTime}ms`,
                         isCompliant: reviewResult.isCompliant,
-                        totalFindings: reviewResult.totalFindings
+                        totalFindings: reviewResult.totalFindings,
+                        usedClaude: useClaude
                     });
                 }
             } else {
@@ -343,15 +375,25 @@ async function processSubmission(body: any, requestId: string) {
                     });
 
                     const batchPromises = batchChunks.map(chunk =>
-                        extractPlanMetadata(chunk.base64, projectDetails)
-                            .catch((error: Error) => {
-                                logWithContext('error', 'Error extracting metadata from chunk', {
-                                    requestId,
-                                    error: error.message,
-                                    stack: error.stack
-                                });
-                                return null;
-                            })
+                        useClaude ? 
+                            extractPlanMetadataWithClaude(chunk.content, projectDetails)
+                                .catch((error: Error) => {
+                                    logWithContext('error', 'Error extracting metadata from chunk with Claude', {
+                                        requestId,
+                                        error: error.message,
+                                        stack: error.stack
+                                    });
+                                    return null;
+                                }) :
+                            extractPlanMetadata(chunk.base64, projectDetails)
+                                .catch((error: Error) => {
+                                    logWithContext('error', 'Error extracting metadata from chunk with OpenAI', {
+                                        requestId,
+                                        error: error.message,
+                                        stack: error.stack
+                                    });
+                                    return null;
+                                })
                     );
 
                     const batchResults = await Promise.all(batchPromises);
@@ -365,13 +407,19 @@ async function processSubmission(body: any, requestId: string) {
                 }
 
                 const reviewStartTime = Date.now();
-                reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
+                
+                if (useClaude) {
+                    reviewResult = await reviewWithMetadataWithClaude(metadataResults as ClaudePlanMetadata[], projectDetails);
+                } else {
+                    reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
+                }
 
                 logWithContext('info', 'Metadata review completed', {
                     requestId,
                     reviewTime: `${Date.now() - reviewStartTime}ms`,
                     isCompliant: reviewResult.isCompliant,
-                    totalFindings: reviewResult.totalFindings
+                    totalFindings: reviewResult.totalFindings,
+                    usedClaude: useClaude
                 });
             }
 
