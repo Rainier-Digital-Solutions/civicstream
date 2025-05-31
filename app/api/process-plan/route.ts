@@ -19,7 +19,7 @@ import * as vercelBlob from '@vercel/blob';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const TIMEOUT_MS = 300000; // 5 minutes
+const TIMEOUT_MS = 600000; // 10 minutes
 const BATCH_SIZE = 5;
 const MAX_SINGLE_REQUEST_SIZE = 2000000; // Maximum size in bytes for single request (~2MB)
 const VERCEL_MEMORY_SAFE_LIMIT = 40 * 1024 * 1024; // 40MB Vercel memory safe limit (tune as needed)
@@ -253,7 +253,7 @@ async function processSubmission(body: any, requestId: string) {
 
                 try {
                     const reviewStartTime = Date.now();
-                    
+
                     if (useClaude) {
                         logWithContext('info', 'Using Claude API for PDF review', { requestId });
                         reviewResult = await reviewPlanWithClaude(pdfBuffer, fileName, projectDetails);
@@ -301,7 +301,7 @@ async function processSubmission(body: any, requestId: string) {
                         });
 
                         const batchPromises = batchChunks.map(chunk =>
-                            useClaude ? 
+                            useClaude ?
                                 extractPlanMetadataWithClaude(chunk.content, projectDetails)
                                     .catch((e: Error) => {
                                         logWithContext('error', 'Error extracting metadata from chunk with Claude', {
@@ -333,7 +333,7 @@ async function processSubmission(body: any, requestId: string) {
                     }
 
                     const reviewStartTime = Date.now();
-                    
+
                     if (useClaude) {
                         reviewResult = await reviewWithMetadataWithClaude(metadataResults as ClaudePlanMetadata[], projectDetails);
                     } else {
@@ -375,7 +375,7 @@ async function processSubmission(body: any, requestId: string) {
                     });
 
                     const batchPromises = batchChunks.map(chunk =>
-                        useClaude ? 
+                        useClaude ?
                             extractPlanMetadataWithClaude(chunk.content, projectDetails)
                                 .catch((error: Error) => {
                                     logWithContext('error', 'Error extracting metadata from chunk with Claude', {
@@ -407,7 +407,7 @@ async function processSubmission(body: any, requestId: string) {
                 }
 
                 const reviewStartTime = Date.now();
-                
+
                 if (useClaude) {
                     reviewResult = await reviewWithMetadataWithClaude(metadataResults as ClaudePlanMetadata[], projectDetails);
                 } else {

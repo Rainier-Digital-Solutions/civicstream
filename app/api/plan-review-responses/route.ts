@@ -9,7 +9,7 @@ import os from 'os';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const TIMEOUT_MS = 300000; // 5 minutes
+const TIMEOUT_MS = 600000; // 10 minutes
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
