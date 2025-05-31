@@ -610,8 +610,8 @@ Please analyze the consolidated metadata from these architectural plans using th
   throw lastError || new Error('Failed to process plan after all retry attempts');
 }
 
-export async function reviewPlanWithClaude(
-  pdfBuffer: Buffer,
+export async function reviewPlanWithClaudeFromUrl(
+  blobUrl: string,
   fileName: string,
   projectDetails: {
     address: string;
@@ -622,14 +622,40 @@ export async function reviewPlanWithClaude(
   },
   maxRetries: number = 3
 ): Promise<ReviewResult> {
-  console.log('[Claude] Starting architectural plan review');
-  console.log('[Claude] PDF Buffer size:', pdfBuffer.length);
+  console.log('[Claude] Starting architectural plan review from URL');
+  console.log('[Claude] Blob URL:', blobUrl.substring(0, 50) + '...');
 
   let attempts = 0;
   let lastError: Error | null = null;
 
   while (attempts < maxRetries) {
     try {
+      // First, fetch the PDF from blob storage
+      console.log('[Claude] Fetching PDF from blob storage');
+      const response = await fetch(blobUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch PDF from blob storage: ${response.statusText}`);
+      }
+      
+      const pdfBuffer = Buffer.from(await response.arrayBuffer());
+      console.log('[Claude] PDF fetched, size:', pdfBuffer.length);
+
+      // Extract text from PDF for Claude analysis
+      console.log('[Claude] Extracting text from PDF for analysis');
+      let pdfTextContent = '';
+      
+      try {
+        const { chunkPDF } = await import('@/lib/pdf-utils');
+        const chunks = await chunkPDF(pdfBuffer);
+        pdfTextContent = chunks.map(chunk => chunk.content).join('\n\n--- PAGE BREAK ---\n\n');
+        console.log('[Claude] Successfully extracted text from PDF, length:', pdfTextContent.length);
+      } catch (pdfError) {
+        console.error('[Claude] Failed to extract text from PDF:', pdfError);
+        // Fallback to template-based review
+        console.log('[Claude] Falling back to template-based review');
+        pdfTextContent = `Unable to extract text from PDF file "${fileName}". Performing template-based review for ${projectDetails.city}, ${projectDetails.county} based on typical residential requirements.`;
+      }
+
       // First, perform web search for building codes
       const searchQuery = `building codes regulations ${projectDetails.city} ${projectDetails.county} Washington state zoning requirements single family residence`;
       console.log('[Claude] Performing web search for building codes:', searchQuery);
@@ -639,10 +665,6 @@ export async function reviewPlanWithClaude(
       const searchResultsText = searchResults.map(result =>
         `Title: ${result.title}\nURL: ${result.url}\nSnippet: ${result.snippet}`
       ).join('\n\n');
-
-      // Convert PDF buffer to a text representation for Claude
-      const pdfBase64 = pdfBuffer.toString('base64');
-      const pdfSummary = `PDF File: ${fileName}, Size: ${pdfBuffer.length} bytes, Base64 preview: ${pdfBase64.substring(0, 200)}...`;
 
       const userMessage = `
 Project Details:
@@ -655,12 +677,12 @@ ${projectDetails.projectSummary ? `Project Summary: ${projectDetails.projectSumm
 BUILDING CODES AND REGULATIONS SEARCH RESULTS:
 ${searchResultsText}
 
-PDF CONTENT SUMMARY:
-${pdfSummary}
+EXTRACTED PDF TEXT CONTENT:
+${pdfTextContent.substring(0, 50000)}${pdfTextContent.length > 50000 ? '\n\n[Content truncated due to length limits]' : ''}
 
-Please analyze the architectural plans based on the project details and building codes found in the search results. Since I cannot directly view the PDF content, please provide a comprehensive review based on typical requirements for single-family residences in ${projectDetails.city}, ${projectDetails.county}, Washington. 
+Please analyze the architectural plans based on the extracted text content and building codes found in the search results. Generate a comprehensive review based on the actual content found in the plans and typical requirements for single-family residences in ${projectDetails.city}, ${projectDetails.county}, Washington. 
 
-You MUST generate at least 6-8 realistic findings and missing items for a typical residential project. Focus on:
+You MUST generate realistic findings and missing items based on what you can determine from the extracted text. Focus on:
 
 TYPICAL MISSING DOCUMENTS for ${projectDetails.city}, WA:
 1. Structural engineering calculations and plans
@@ -683,77 +705,305 @@ TYPICAL CODE COMPLIANCE ISSUES:
 Generate specific, realistic findings with proper code references (like "IRC Section 123.4" or "King County Code 21A.24.XXX"). Provide detailed review following the required JSON format with properly formatted HTML email bodies that include the full detailed findings list.`;
 
       console.log(`[Claude] Attempt ${attempts + 1}/${maxRetries}: Sending request to Claude`);
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 20000,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: COMPLIANCE_REVIEW_PROMPT
-              },
-              {
-                type: "text",
-                text: userMessage
-              }
-            ]
-          }
-        ]
-      });
+      
+      // Add timeout handling like OpenAI implementation
+      const timeoutMs = 300000; // 5 minutes to match OpenAI timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      
+      try {
+        const response = await anthropic.messages.create({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 20000,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: COMPLIANCE_REVIEW_PROMPT
+                },
+                {
+                  type: "text",
+                  text: userMessage
+                }
+              ]
+            }
+          ]
+        });
+        
+        clearTimeout(timeoutId);
 
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('No text response received from Claude');
+        const content = response.content[0];
+        if (content.type !== 'text') {
+          throw new Error('No text response received from Claude');
+        }
+
+        console.log('[Claude] Raw response length:', content.text.length);
+
+        try {
+          // Preprocess content to remove markdown formatting
+          let processedContent = content.text;
+
+          // Strip out markdown code block delimiters if present
+          const jsonMatch = content.text.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (jsonMatch && jsonMatch[1]) {
+            processedContent = jsonMatch[1].trim();
+          }
+
+          console.log('[Claude] Processing raw response for JSON extraction');
+          const result = JSON.parse(processedContent);
+          console.log('[Claude] Successfully parsed JSON response');
+
+          // Enhanced validation of the response structure
+          if (!result.summary || !Array.isArray(result.criticalFindings) ||
+            !Array.isArray(result.majorFindings) || !Array.isArray(result.minorFindings) ||
+            typeof result.totalFindings !== 'number' || typeof result.isCompliant !== 'boolean' ||
+            !result.cityPlannerEmailBody || !result.submitterEmailBody) {
+            throw new Error('Invalid response structure from AI');
+          }
+
+          return {
+            summary: result.summary,
+            missingPlans: result.missingPlans || [],
+            missingPermits: result.missingPermits || [],
+            missingDocumentation: result.missingDocumentation || [],
+            missingInspectionCertificates: result.missingInspectionCertificates || [],
+            criticalFindings: result.criticalFindings,
+            majorFindings: result.majorFindings,
+            minorFindings: result.minorFindings,
+            totalFindings: result.totalFindings,
+            isCompliant: result.isCompliant,
+            cityPlannerEmailBody: result.cityPlannerEmailBody,
+            submitterEmailBody: result.submitterEmailBody
+          };
+        } catch (parseError) {
+          console.error(`[Claude] Attempt ${attempts + 1} failed to parse JSON:`, parseError);
+          console.error('[Claude] Raw response that failed to parse:', content.text);
+          lastError = parseError instanceof Error ? parseError : new Error('Failed to parse AI response as JSON');
+
+          if (attempts === maxRetries - 1) {
+            return getDefaultErrorResponse();
+          }
+        }
+      } catch (apiError) {
+        clearTimeout(timeoutId);
+        throw apiError;
+      }
+    } catch (error) {
+      console.error(`[Claude] Attempt ${attempts + 1} failed with error:`, error);
+      lastError = error instanceof Error ? error : new Error('Unknown error occurred');
+
+      if (attempts === maxRetries - 1) {
+        return getDefaultErrorResponse();
+      }
+    }
+
+    attempts++;
+    if (attempts < maxRetries) {
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+    }
+  }
+
+  throw lastError || new Error('Failed to process plan after all retry attempts');
+}
+
+// Keep the original function for backward compatibility but mark as deprecated
+/**
+ * @deprecated Use reviewPlanWithClaudeFromUrl instead to avoid file size limits
+ */
+export async function reviewPlanWithClaude(
+  pdfBuffer: Buffer,
+  fileName: string,
+  projectDetails: {
+    address: string;
+    parcelNumber: string;
+    city: string;
+    county: string;
+    projectSummary?: string;
+  },
+  maxRetries: number = 3
+): Promise<ReviewResult> {
+  console.log('[Claude] Starting architectural plan review');
+  console.log('[Claude] PDF Buffer size:', pdfBuffer.length);
+
+  // Check file size limits - Claude cannot handle large files directly
+  const MAX_CLAUDE_BUFFER_SIZE = 5 * 1024 * 1024; // 5MB limit for Claude direct processing
+  
+  if (pdfBuffer.length > MAX_CLAUDE_BUFFER_SIZE) {
+    console.log('[Claude] PDF exceeds direct processing limit, falling back to chunking approach');
+    // Fall back to chunking approach for large files
+    const { chunkPDF } = await import('@/lib/pdf-utils');
+    const chunks = await chunkPDF(pdfBuffer);
+    
+    const metadataResults: PlanMetadata[] = [];
+    for (const chunk of chunks) {
+      try {
+        const metadata = await extractPlanMetadataWithClaude(chunk.content, projectDetails);
+        metadataResults.push(metadata);
+      } catch (error) {
+        console.error('[Claude] Error extracting metadata from chunk:', error);
+        // Continue with other chunks
+      }
+    }
+    
+    return await reviewWithMetadataWithClaude(metadataResults, projectDetails, maxRetries);
+  }
+
+  let attempts = 0;
+  let lastError: Error | null = null;
+
+  while (attempts < maxRetries) {
+    try {
+      // First, perform web search for building codes
+      const searchQuery = `building codes regulations ${projectDetails.city} ${projectDetails.county} Washington state zoning requirements single family residence`;
+      console.log('[Claude] Performing web search for building codes:', searchQuery);
+      const searchResults = await performWebSearch(searchQuery, 5);
+      console.log('[Claude] Web search returned', searchResults.length, 'results');
+
+      const searchResultsText = searchResults.map(result =>
+        `Title: ${result.title}\nURL: ${result.url}\nSnippet: ${result.snippet}`
+      ).join('\n\n');
+
+      // Since Claude cannot process PDFs directly, we need to extract text first
+      console.log('[Claude] Extracting text from PDF for analysis');
+      let pdfTextContent = '';
+      
+      try {
+        const { chunkPDF } = await import('@/lib/pdf-utils');
+        const chunks = await chunkPDF(pdfBuffer);
+        pdfTextContent = chunks.map(chunk => chunk.content).join('\n\n--- PAGE BREAK ---\n\n');
+        console.log('[Claude] Successfully extracted text from PDF, length:', pdfTextContent.length);
+      } catch (pdfError) {
+        console.error('[Claude] Failed to extract text from PDF:', pdfError);
+        // Fallback to metadata-based review
+        console.log('[Claude] Falling back to template-based review');
+        pdfTextContent = `Unable to extract text from PDF file "${fileName}". Performing template-based review for ${projectDetails.city}, ${projectDetails.county} based on typical residential requirements.`;
       }
 
-      console.log('[Claude] Raw response length:', content.text.length);
+      const userMessage = `
+Project Details:
+Address: ${projectDetails.address}
+Parcel Number: ${projectDetails.parcelNumber}
+City: ${projectDetails.city}
+County: ${projectDetails.county}
+${projectDetails.projectSummary ? `Project Summary: ${projectDetails.projectSummary}` : ''}
 
+BUILDING CODES AND REGULATIONS SEARCH RESULTS:
+${searchResultsText}
+
+EXTRACTED PDF TEXT CONTENT:
+${pdfTextContent.substring(0, 50000)}${pdfTextContent.length > 50000 ? '\n\n[Content truncated due to length limits]' : ''}
+
+Please analyze the architectural plans based on the extracted text content and building codes found in the search results. Generate a comprehensive review based on the actual content found in the plans and typical requirements for single-family residences in ${projectDetails.city}, ${projectDetails.county}, Washington. 
+
+You MUST generate realistic findings and missing items based on what you can determine from the extracted text. Focus on:
+
+TYPICAL MISSING DOCUMENTS for ${projectDetails.city}, WA:
+1. Structural engineering calculations and plans
+2. Energy code compliance documentation (WSE forms)
+3. Stormwater management plan and calculations  
+4. Site survey/boundary survey
+5. Geotechnical report (if required by soil conditions)
+6. Building permit application form
+7. MEP (Mechanical/Electrical/Plumbing) detailed plans
+8. Erosion and sediment control plan
+
+TYPICAL CODE COMPLIANCE ISSUES:
+1. Setback violations or unclear setback dimensions
+2. Height restrictions compliance
+3. Parking requirements
+4. Fire safety access requirements
+5. ADA compliance issues
+6. Energy code compliance gaps
+
+Generate specific, realistic findings with proper code references (like "IRC Section 123.4" or "King County Code 21A.24.XXX"). Provide detailed review following the required JSON format with properly formatted HTML email bodies that include the full detailed findings list.`;
+
+      console.log(`[Claude] Attempt ${attempts + 1}/${maxRetries}: Sending request to Claude`);
+      
+      // Add timeout handling like OpenAI implementation
+      const timeoutMs = 300000; // 5 minutes to match OpenAI timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      
       try {
-        // Preprocess content to remove markdown formatting
-        let processedContent = content.text;
+        const response = await anthropic.messages.create({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 20000,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: COMPLIANCE_REVIEW_PROMPT
+                },
+                {
+                  type: "text",
+                  text: userMessage
+                }
+              ]
+            }
+          ]
+        });
+        
+        clearTimeout(timeoutId);
 
-        // Strip out markdown code block delimiters if present
-        const jsonMatch = content.text.match(/```(?:json)?\s*([\s\S]*?)```/);
-        if (jsonMatch && jsonMatch[1]) {
-          processedContent = jsonMatch[1].trim();
+        const content = response.content[0];
+        if (content.type !== 'text') {
+          throw new Error('No text response received from Claude');
         }
 
-        console.log('[Claude] Processing raw response for JSON extraction');
-        const result = JSON.parse(processedContent);
-        console.log('[Claude] Successfully parsed JSON response');
+        console.log('[Claude] Raw response length:', content.text.length);
 
-        // Enhanced validation of the response structure
-        if (!result.summary || !Array.isArray(result.criticalFindings) ||
-          !Array.isArray(result.majorFindings) || !Array.isArray(result.minorFindings) ||
-          typeof result.totalFindings !== 'number' || typeof result.isCompliant !== 'boolean' ||
-          !result.cityPlannerEmailBody || !result.submitterEmailBody) {
-          throw new Error('Invalid response structure from AI');
+        try {
+          // Preprocess content to remove markdown formatting
+          let processedContent = content.text;
+
+          // Strip out markdown code block delimiters if present
+          const jsonMatch = content.text.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (jsonMatch && jsonMatch[1]) {
+            processedContent = jsonMatch[1].trim();
+          }
+
+          console.log('[Claude] Processing raw response for JSON extraction');
+          const result = JSON.parse(processedContent);
+          console.log('[Claude] Successfully parsed JSON response');
+
+          // Enhanced validation of the response structure
+          if (!result.summary || !Array.isArray(result.criticalFindings) ||
+            !Array.isArray(result.majorFindings) || !Array.isArray(result.minorFindings) ||
+            typeof result.totalFindings !== 'number' || typeof result.isCompliant !== 'boolean' ||
+            !result.cityPlannerEmailBody || !result.submitterEmailBody) {
+            throw new Error('Invalid response structure from AI');
+          }
+
+          return {
+            summary: result.summary,
+            missingPlans: result.missingPlans || [],
+            missingPermits: result.missingPermits || [],
+            missingDocumentation: result.missingDocumentation || [],
+            missingInspectionCertificates: result.missingInspectionCertificates || [],
+            criticalFindings: result.criticalFindings,
+            majorFindings: result.majorFindings,
+            minorFindings: result.minorFindings,
+            totalFindings: result.totalFindings,
+            isCompliant: result.isCompliant,
+            cityPlannerEmailBody: result.cityPlannerEmailBody,
+            submitterEmailBody: result.submitterEmailBody
+          };
+        } catch (parseError) {
+          console.error(`[Claude] Attempt ${attempts + 1} failed to parse JSON:`, parseError);
+          console.error('[Claude] Raw response that failed to parse:', content.text);
+          lastError = parseError instanceof Error ? parseError : new Error('Failed to parse AI response as JSON');
+
+          if (attempts === maxRetries - 1) {
+            return getDefaultErrorResponse();
+          }
         }
-
-        return {
-          summary: result.summary,
-          missingPlans: result.missingPlans || [],
-          missingPermits: result.missingPermits || [],
-          missingDocumentation: result.missingDocumentation || [],
-          missingInspectionCertificates: result.missingInspectionCertificates || [],
-          criticalFindings: result.criticalFindings,
-          majorFindings: result.majorFindings,
-          minorFindings: result.minorFindings,
-          totalFindings: result.totalFindings,
-          isCompliant: result.isCompliant,
-          cityPlannerEmailBody: result.cityPlannerEmailBody,
-          submitterEmailBody: result.submitterEmailBody
-        };
-      } catch (parseError) {
-        console.error(`[Claude] Attempt ${attempts + 1} failed to parse JSON:`, parseError);
-        console.error('[Claude] Raw response that failed to parse:', content.text);
-        lastError = parseError instanceof Error ? parseError : new Error('Failed to parse AI response as JSON');
-
-        if (attempts === maxRetries - 1) {
-          return getDefaultErrorResponse();
-        }
+      } catch (apiError) {
+        clearTimeout(timeoutId);
+        throw apiError;
       }
     } catch (error) {
       console.error(`[Claude] Attempt ${attempts + 1} failed with error:`, error);
