@@ -98,17 +98,62 @@ Both cityPlannerEmailBody and submitterEmailBody must use the following HTML/CSS
   - A bold 'Finding Counts' subheader
   - A bulleted list of counts for critical, major, minor, and total findings
   - A bulleted list of counts for missing plans, permits, documentation, and inspection certificates
-- A detailed "Findings" section with each finding listed as:
-  <h4>Major Finding 1: [Title]</h4>
-  <p><strong>Description:</strong> [Detailed description]</p>
-  <p><strong>Code Section:</strong> [Specific code reference]</p>
-  <p><strong>Remedial Action:</strong> [How to fix]</p>
-  <p><strong>Confidence:</strong> [Score]%</p>
-- A detailed "Missing Items" section with each missing item listed as:
-  <h4>Missing Plan: [Title]</h4>
-  <p><strong>Description:</strong> [What's missing]</p>
-  <p><strong>Code Requirement:</strong> [Why it's required]</p>
-  <p><strong>Action Required:</strong> [How to provide]</p>
+- A section with header:
+  <h3 style="color: #dc2626; font-size: 18px; font-weight: 600; margin: 25px 0 15px 0; border-bottom: 2px solid #dc2626; padding-bottom: 5px;">🔍 Detailed Findings</h3>
+- Critical findings in red containers:
+  <div style="margin-bottom: 20px; padding: 15px; border-left: 4px solid #dc2626; background-color: #fef2f2; border-radius: 4px;">
+    <h4 style="margin: 0 0 10px 0; color: #dc2626; font-size: 16px; font-weight: 600;">🚨 Critical Finding: [Title]</h4>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Description:</strong> [Detailed description]</p>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Code Section:</strong> [Specific code reference]</p>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Remedial Action:</strong> [How to fix]</p>
+    <p style="margin: 8px 0 0 0; color: #6b7280; font-size: 14px;"><strong>Confidence:</strong> [Score]%</p>
+  </div>
+- Major findings in orange containers:
+  <div style="margin-bottom: 20px; padding: 15px; border-left: 4px solid #ea580c; background-color: #fff7ed; border-radius: 4px;">
+    <h4 style="margin: 0 0 10px 0; color: #ea580c; font-size: 16px; font-weight: 600;">⚠️ Major Finding: [Title]</h4>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Description:</strong> [Detailed description]</p>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Code Section:</strong> [Specific code reference]</p>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Remedial Action:</strong> [How to fix]</p>
+    <p style="margin: 8px 0 0 0; color: #6b7280; font-size: 14px;"><strong>Confidence:</strong> [Score]%</p>
+  </div>
+- Minor findings in yellow containers:
+  <div style="margin-bottom: 20px; padding: 15px; border-left: 4px solid #eab308; background-color: #fefce8; border-radius: 4px;">
+    <h4 style="margin: 0 0 10px 0; color: #eab308; font-size: 16px; font-weight: 600;">💡 Minor Finding: [Title]</h4>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Description:</strong> [Detailed description]</p>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Code Section:</strong> [Specific code reference]</p>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Remedial Action:</strong> [How to fix]</p>
+    <p style="margin: 8px 0 0 0; color: #6b7280; font-size: 14px;"><strong>Confidence:</strong> [Score]%</p>
+  </div>
+- A section with header:
+  <h3 style="color: #f59e0b; font-size: 18px; font-weight: 600; margin: 25px 0 15px 0; border-bottom: 2px solid #f59e0b; padding-bottom: 5px;">📋 Missing Items</h3>
+- Missing Plans in blue containers:
+  <div style="margin-bottom: 20px; padding: 15px; border-left: 4px solid #3b82f6; background-color: #eff6ff; border-radius: 4px;">
+    <h4 style="margin: 0 0 10px 0; color: #3b82f6; font-size: 16px; font-weight: 600;">📐 Missing Plan: [Title]</h4>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Description:</strong> [What's missing]</p>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Code Requirement:</strong> [Why it's required]</p>
+    <p style="margin: 8px 0 0 0; color: #374151;"><strong style="color: #1f2937;">Action Required:</strong> [How to provide]</p>
+  </div>
+- Missing Permits in purple containers:
+  <div style="margin-bottom: 20px; padding: 15px; border-left: 4px solid #8b5cf6; background-color: #f5f3ff; border-radius: 4px;">
+    <h4 style="margin: 0 0 10px 0; color: #8b5cf6; font-size: 16px; font-weight: 600;">📄 Missing Permit: [Title]</h4>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Description:</strong> [What's missing]</p>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Code Requirement:</strong> [Why it's required]</p>
+    <p style="margin: 8px 0 0 0; color: #374151;"><strong style="color: #1f2937;">Action Required:</strong> [How to provide]</p>
+  </div>
+- Missing Documentation in green containers:
+  <div style="margin-bottom: 20px; padding: 15px; border-left: 4px solid #10b981; background-color: #ecfdf5; border-radius: 4px;">
+    <h4 style="margin: 0 0 10px 0; color: #10b981; font-size: 16px; font-weight: 600;">📋 Missing Documentation: [Title]</h4>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Description:</strong> [What's missing]</p>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Code Requirement:</strong> [Why it's required]</p>
+    <p style="margin: 8px 0 0 0; color: #374151;"><strong style="color: #1f2937;">Action Required:</strong> [How to provide]</p>
+  </div>
+- Missing Inspection Certificates in teal containers:
+  <div style="margin-bottom: 20px; padding: 15px; border-left: 4px solid #14b8a6; background-color: #f0fdfa; border-radius: 4px;">
+    <h4 style="margin: 0 0 10px 0; color: #14b8a6; font-size: 16px; font-weight: 600;">✅ Missing Inspection: [Title]</h4>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Description:</strong> [What's missing]</p>
+    <p style="margin: 8px 0; color: #374151;"><strong style="color: #1f2937;">Code Requirement:</strong> [Why it's required]</p>
+    <p style="margin: 8px 0 0 0; color: #374151;"><strong style="color: #1f2937;">Action Required:</strong> [How to provide]</p>
+  </div>
 - CRITICAL: Both emails MUST include the complete detailed list of ALL findings and missing items, not just counts.
 - (For submitter only) A section for 'Next Steps' with a numbered list
 - A gray footer paragraph in small text
@@ -353,7 +398,7 @@ ${pdfContent}`;
 
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 10000,
+      max_tokens: 20000,
       messages: [
         {
           role: "user",
@@ -477,7 +522,7 @@ Please analyze the consolidated metadata from these architectural plans using th
       console.log(`[Claude] Attempt ${attempts + 1}/${maxRetries}: Sending request to Claude`);
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 10000,
+        max_tokens: 20000,
         messages: [
           {
             role: "user",
@@ -640,7 +685,7 @@ Generate specific, realistic findings with proper code references (like "IRC Sec
       console.log(`[Claude] Attempt ${attempts + 1}/${maxRetries}: Sending request to Claude`);
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 10000,
+        max_tokens: 20000,
         messages: [
           {
             role: "user",
