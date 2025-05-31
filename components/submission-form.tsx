@@ -58,6 +58,7 @@ export function SubmissionForm() {
       city: '',
       county: '',
       projectSummary: '',
+      useClaude: true,
     },
   });
 
