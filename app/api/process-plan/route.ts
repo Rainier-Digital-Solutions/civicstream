@@ -8,6 +8,7 @@ import {
 } from '@/lib/openai';
 import {
     reviewPlanWithClaude,
+    reviewPlanWithClaudeFromUrl,
     extractPlanMetadataWithClaude,
     reviewWithMetadataWithClaude,
     PlanMetadata as ClaudePlanMetadata
@@ -272,14 +273,15 @@ async function processSubmission(body: any, requestId: string) {
                     const reviewStartTime = Date.now();
 
                     if (useClaude) {
-                        logWithContext('info', 'Using Claude API for PDF review', { 
+                        logWithContext('info', 'Using Claude API for PDF review from URL', { 
                             requestId,
                             anthropicKeyPresent: !!process.env.ANTHROPIC_API_KEY,
                             perplexityKeyPresent: !!process.env.PERPLEXITY_API_KEY,
-                            serpApiKeyPresent: !!process.env.SERPAPI_API_KEY
+                            serpApiKeyPresent: !!process.env.SERPAPI_API_KEY,
+                            blobUrl: blobUrl.substring(0, 50) + '...'
                         });
                         try {
-                            reviewResult = await reviewPlanWithClaude(pdfBuffer, fileName, projectDetails);
+                            reviewResult = await reviewPlanWithClaudeFromUrl(blobUrl, fileName, projectDetails);
                             logWithContext('info', 'Claude API call completed successfully', { requestId });
                         } catch (claudeError) {
                             logWithContext('error', 'Claude API call failed', {
