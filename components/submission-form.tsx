@@ -244,7 +244,7 @@ export function SubmissionForm() {
       // At this point the file is successfully uploaded
       setUploadProgress(100);
 
-      // Submit form data with blob URL
+      // Submit form data with blob URL - this initiates background processing
       const submissionFormData = new FormData();
       submissionFormData.append('blobUrl', blobUrl);
       submissionFormData.append('submitterEmail', data.submitterEmail);
@@ -259,7 +259,7 @@ export function SubmissionForm() {
 
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
 
-      // Send the submission but don't wait for processing
+      // Send the submission and wait for confirmation that background processing started
       const response = await fetch(`${baseUrl}/api/submit-plan`, {
         method: 'POST',
         body: submissionFormData,
@@ -270,17 +270,22 @@ export function SubmissionForm() {
         throw new Error(errorData.error || 'Failed to submit plan');
       }
 
-      // Show success immediately
+      // Background processing has been initiated successfully
       setSubmissionStatus('success');
 
       toast({
-        title: 'Plan submitted successfully',
-        description: 'You will receive the results via email once processing is complete',
+        title: 'Plan submitted successfully!',
+        description: 'Your plan is being analyzed. You will receive the results via email once processing is complete.',
       });
 
-      // Reset form
-      form.reset();
-      setFile(null);
+      // Brief delay to show success state before resetting
+      setTimeout(() => {
+        // Reset form immediately
+        form.reset();
+        setFile(null);
+        setUploadProgress(0);
+        setSubmissionStatus('idle');
+      }, 1500);
 
     } catch (error) {
       console.error('Error submitting plan:', error);
@@ -380,7 +385,7 @@ export function SubmissionForm() {
                       {uploadProgress < 95
                         ? `Uploading: ${uploadProgress}%`
                         : uploadProgress === 100
-                          ? 'Upload complete!'
+                          ? 'Upload complete! Submitting for analysis...'
                           : 'Finalizing upload...'}
                     </p>
                   </div>

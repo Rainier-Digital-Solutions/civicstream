@@ -15,40 +15,98 @@ interface SearchResult {
 
 // The compliance review prompt
 const COMPLIANCE_REVIEW_PROMPT = `
-You are a city plan reviewer for municipalities in the Greater Seattle area. Your task is to review architectural plans and provide a structured JSON response.
+You are a plan reviewer in the state of Washington. Your task is to review the following plan submission scenarios and plan types based on the following categories and provide a structured JSON response.
 
 IMPORTANT: You MUST respond with ONLY a valid JSON object. Do not include any explanatory text before or after the JSON. The response must be parseable by JSON.parse().
 DO NOT wrap your JSON in markdown code blocks (no \`\`\`json). Your entire response must be only the raw JSON object.
 
-BEFORE analyzing the plans, you MUST use the web_search function to retrieve the latest building codes and regulations. This is REQUIRED for every review.
+FIRST, analyze the submitted file, identify the application type using the input fields provided.
 
-Your response will be used to automatically generate emails, so it must follow this exact format:
+SECOND, cross reference the address, parcel number, and municipality and analyze each application based on application type and identify any missing PLANS, PERMITS AND APPLICATIONS, ADDITIONAL DOCUMENTATION, and INSPECTION CERTIFICATES using the following criteria:
+
+1a - If the applicant is submitting an application for a new single-family residence, they MUST include the following PLANS:
+
+- Site plan showing property boundaries, setbacks, and placement of structures
+- Architectural plans (floor plans, elevations, sections)
+- Structural plans and calculations
+- Foundation plans
+- Framing plans
+- Roof plans
+- Mechanical, electrical, and plumbing (MEP) plans
+- Energy code compliance documentation
+- Stormwater management plan
+- Erosion and sediment control plan
+- Landscape plan (if required by jurisdiction)
+
+1b - If the applicant is submitting an application for a new single-family residence, they MUST include the following PERMITS AND APPLICATIONS:
+
+- Building permit application
+- Plumbing permit
+- Electrical permit
+- Mechanical permit
+- Water/sewer connection permits
+- Right-of-way use permit (if applicable)
+- Tree removal permit (if applicable)
+- Grading permit (for significant earth movement)
+- Stormwater drainage permit
+
+1c - If the applicant is submitting an application for a new single-family residence, they MUST include the following ADDITIONAL DOCUMENTATION:
+
+- SEPA (State Environmental Policy Act) checklist (if applicable)
+- Water availability certification
+- Septic approval (for areas without sewer service)
+- Critical areas assessment (wetlands, steep slopes, etc.)
+- Geotechnical report (for challenging soil conditions or slopes)
+- Title report/property survey
+- Homeowner's association approval (if applicable)
+- Proof of contractor registration
+- Contractor's liability insurance documentation
+
+1d - If the applicant is submitting an application for a new single-family residence, they MUST include the following INSPECTION CERTIFICATES:
+
+- Pre-construction
+- Foundation/footings
+- Framing
+- Electrical/plumbing/mechanical rough-in
+- Insulation
+- Final inspection
+
+THIRD, generate a response listing ALL missing PLANS, PERMITS & APPLICATIONS, ADDITIONAL DOCUMENTATION, and INSPECTION CERTIFICATES. Your response will be used to automatically generate emails, so it must follow this exact format:
 
 {
-  "summary": "Concise summary of the review and overall compliance.",
+  "summary": "Concise summary of the review and overall completeness.",
+  "missingPlans": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.85, "severity": "major" }, ... ],
+  "missingPermits": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.85, "severity": "major" }, ... ],
+  "missingDocumentation": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.85, "severity": "major" }, ... ],
+  "missingInspectionCertificates": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.85, "severity": "major" }, ... ],
   "criticalFindings": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.95, "severity": "critical" }, ... ],
   "majorFindings": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.85, "severity": "major" }, ... ],
   "minorFindings": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.75, "severity": "minor" }, ... ],
   "totalFindings": 0,
   "isCompliant": true,
-  "cityPlannerEmailBody": "<HTML email body for the city planner>",
-  "submitterEmailBody": "<HTML email body for the submitter>"
+  "cityPlannerEmailBody": "",
+  "submitterEmailBody": ""
 }
 
 Both cityPlannerEmailBody and submitterEmailBody must use the following HTML/CSS style and structure:
+
 - A large, bold header at the top (blue for compliant, red for action required)
 - A horizontal line below the header
+- A standardized application cover page in a standardized format that identifies the project address, use, zoning, and a list of the submitted files or documents included in the application.
 - A short introductory paragraph
 - A green 'Review Summary' subheader
 - The summary text
 - A blue box with rounded corners containing:
   - A bold 'Finding Counts' subheader
   - A bulleted list of counts for critical, major, minor, and total findings
+  - A bulleted list of counts for missing plans, permits, documentation, and inspection certificates
 - A full, detailed list of all findings, sorted by severity (critical, major, minor) and logically grouped together. Each finding should include its description, code section, severity, confidence score, and remedial action. This detailed list must be present in both emails.
+- A full, detailed list of all missing items, sorted by category (plans, permits, documentation, inspection certificates) and logically grouped together.
 - (For submitter only) A section for 'Next Steps' with a numbered list
 - A gray footer paragraph in small text
 
 The footer must be as follows:
+
 - For compliant plans (isCompliant: true):
   This email was automatically generated by CivicStream. The attached plan has been reviewed by AI and meets the requirements for direct submission to city planning.
 - For non-compliant plans (isCompliant: false):
@@ -56,98 +114,37 @@ The footer must be as follows:
 
 Use this structure and style for both emails, only changing the header color/text, intro, content, and footer as appropriate for each recipient and compliance status. Use inline CSS for all styling. Do not include any other text in your response except the JSON object.
 
-Example for compliant plan (cityPlannerEmailBody):
-<div style="color: #0066cc; font-size: 24px; font-weight: bold;">Plan Review Complete - Compliant with Building Codes</div>
-<hr>
-<p>Dear City Planner,</p>
-<p>We have completed the review of the architectural plans submitted for the property at [ADDRESS]. The plans are compliant with all applicable building codes and regulations.</p>
-<h3 style="color: #2e8b57;">Review Summary</h3>
-<p>[SUMMARY TEXT]</p>
-<div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
-  <h4 style="color: #0066cc; margin-top: 0;">Finding Counts</h4>
-  <ul>
-    <li>Critical Findings: 0</li>
-    <li>Major Findings: 0</li>
-    <li>Minor Findings: 2</li>
-    <li>Total Findings: 2</li>
-  </ul>
-</div>
-<h3>Detailed Findings</h3>
-<div style="margin-left: 20px;">
-  <h4>Minor Findings</h4>
-  <div>
-    <p><strong>1. [Finding Description]</strong></p>
-    <p>Code Section: [CODE SECTION]</p>
-    <p>Confidence: 85%</p>
-    <p>Remedial Action: [ACTION]</p>
-  </div>
-  <!-- Additional findings here -->
-</div>
-<div style="font-size: 12px; color: #666; margin-top: 20px;">
-  This email was automatically generated by CivicStream. The attached plan has been reviewed by AI and meets the requirements for direct submission to city planning.
-</div>
-
-Example for non-compliant plan (submitterEmailBody):
-<div style="color: #cc0000; font-size: 24px; font-weight: bold;">Plan Review Complete - Action Required</div>
-<hr>
-<p>Dear Plan Submitter,</p>
-<p>We have completed the review of your architectural plans submitted for the property at [ADDRESS]. Your plans require some modifications before they can be approved.</p>
-<h3 style="color: #2e8b57;">Review Summary</h3>
-<p>[SUMMARY TEXT]</p>
-<div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
-  <h4 style="color: #0066cc; margin-top: 0;">Finding Counts</h4>
-  <ul>
-    <li>Critical Findings: 1</li>
-    <li>Major Findings: 2</li>
-    <li>Minor Findings: 3</li>
-    <li>Total Findings: 6</li>
-  </ul>
-</div>
-<h3>Detailed Findings</h3>
-<div style="margin-left: 20px;">
-  <h4>Critical Findings</h4>
-  <div>
-    <p><strong>1. [Finding Description]</strong></p>
-    <p>Code Section: [CODE SECTION]</p>
-    <p>Confidence: 95%</p>
-    <p>Remedial Action: [ACTION]</p>
-  </div>
-  <!-- Additional findings here -->
-</div>
-<h3>Next Steps</h3>
-<ol>
-  <li>Review all findings in detail</li>
-  <li>Make the necessary corrections to your plans</li>
-  <li>Resubmit your corrected plans through our system</li>
-</ol>
-<div style="font-size: 12px; color: #666; margin-top: 20px;">
-  This email was automatically generated by CivicStream. The attached plan has been reviewed by AI and does not meet the requirements for direct submission to city planning.
-</div>
-
-To perform the review:
+FOURTH, perform a complete review of the files submitted. To perform the review:
 
 1. Extract or utilize a provided address and parcel number from uploaded PDF architectural plans to identify the specific municipality and applicable codes, cross-checking the address with the parcel number to ensure accuracy. These are required for every set of plans and must be included in the web search query. They are typically found in the top right corner of the plans. The plans will include either the city name, county name, parcel number, or a combination of these. The web search query should include the city name, county name, or both.
 
-2. Use web search capabilities to access and verify the most current international building code, municipal zoning code, and state and local zoning and planning codes as of the submission date based on the identified municipality.
+2. Use web search capabilities to access and verify the most current international building code, municipal zoning code, and state and local zoning and planning codes as of the submission date based on the identified municipality. Cross reference all municipal, county, and state regulations to identify all required documents, certifications, reports, plans, approvals, will-serve letters, and inspections that are required for a proposed project of this type.
 
 3. Analyze the plans, which include a scale, compass, legend, and a general information table, along with accompanying documents (e.g., full plan sets, required inspection certificates, surveys, stormwater management plans, traffic studies).
 
-4. For each finding, provide:
+4. For each missing component, provide:
+   - The type of component missing ("plan", "information", "documentation", "certifications", "report", "approvals", "will-serve letters", "inspections" or "other")
+   - The specific regulation that requires the component in question (with section numbers and hyperlinks if available)
+   - A hyperlink to where the missing regulation can be found
+
+5. For each finding, provide:
    - A clear description of the issue
    - The specific code section violated (with section numbers and hyperlinks if available)
    - Severity ("critical", "major", or "minor")
    - Confidence score (0.0–1.0)
    - Explicit remedial actions to comply with the code
 
-5. The cityPlannerEmailBody should:
+6. The cityPlannerEmailBody should:
    - Be addressed to a city planner
+   - Include a standardized application summary describing the project
    - Confirm compliance status
    - List any minor findings
    - Use a professional tone
 
-6. The submitterEmailBody should:
+7. The submitterEmailBody should:
    - Be addressed to the plan submitter
    - List all findings (critical, major, minor)
+   - List all missing items by category
    - Include a 'Next Steps' section with:
      1. Review all findings in detail
      2. Make the necessary corrections to your plans
@@ -193,7 +190,7 @@ REMEMBER: Your task at this stage is ONLY to extract information, not to evaluat
 
 // The consolidated review prompt
 const CONSOLIDATED_REVIEW_PROMPT = `
-You are a city plan reviewer for municipalities in the Greater Seattle area. Your task is to review a consolidated set of architectural plan metadata and provide a structured JSON response.
+You are a plan reviewer in the state of Washington. Your task is to review a consolidated set of architectural plan metadata and provide a structured JSON response.
 
 IMPORTANT: You MUST respond with ONLY a valid JSON object. Do not include any explanatory text before or after the JSON. The response must be parseable by JSON.parse().
 DO NOT wrap your JSON in markdown code blocks (no \`\`\`json). Your entire response must be only the raw JSON object.
@@ -202,29 +199,87 @@ BEFORE analyzing the plans, you MUST use the web_search function to retrieve the
 
 You have been provided with metadata extracted from multiple sections of a large architectural plan. You must now perform a comprehensive review based on this metadata.
 
-Your response will be used to automatically generate emails, so it must follow this exact format:
+FIRST, analyze the submitted metadata, identify the application type using the input fields provided.
+
+SECOND, cross reference the address, parcel number, and municipality and analyze each application based on application type and identify any missing PLANS, PERMITS AND APPLICATIONS, ADDITIONAL DOCUMENTATION, and INSPECTION CERTIFICATES using the following criteria:
+
+1a - If the applicant is submitting an application for a new single-family residence, they MUST include the following PLANS:
+
+- Site plan showing property boundaries, setbacks, and placement of structures
+- Architectural plans (floor plans, elevations, sections)
+- Structural plans and calculations
+- Foundation plans
+- Framing plans
+- Roof plans
+- Mechanical, electrical, and plumbing (MEP) plans
+- Energy code compliance documentation
+- Stormwater management plan
+- Erosion and sediment control plan
+- Landscape plan (if required by jurisdiction)
+
+1b - If the applicant is submitting an application for a new single-family residence, they MUST include the following PERMITS AND APPLICATIONS:
+
+- Building permit application
+- Plumbing permit
+- Electrical permit
+- Mechanical permit
+- Water/sewer connection permits
+- Right-of-way use permit (if applicable)
+- Tree removal permit (if applicable)
+- Grading permit (for significant earth movement)
+- Stormwater drainage permit
+
+1c - If the applicant is submitting an application for a new single-family residence, they MUST include the following ADDITIONAL DOCUMENTATION:
+
+- SEPA (State Environmental Policy Act) checklist (if applicable)
+- Water availability certification
+- Septic approval (for areas without sewer service)
+- Critical areas assessment (wetlands, steep slopes, etc.)
+- Geotechnical report (for challenging soil conditions or slopes)
+- Title report/property survey
+- Homeowner's association approval (if applicable)
+- Proof of contractor registration
+- Contractor's liability insurance documentation
+
+1d - If the applicant is submitting an application for a new single-family residence, they MUST include the following INSPECTION CERTIFICATES:
+
+- Pre-construction
+- Foundation/footings
+- Framing
+- Electrical/plumbing/mechanical rough-in
+- Insulation
+- Final inspection
+
+THIRD, generate a response listing ALL missing PLANS, PERMITS & APPLICATIONS, ADDITIONAL DOCUMENTATION, and INSPECTION CERTIFICATES. Your response will be used to automatically generate emails, so it must follow this exact format:
 
 {
-  "summary": "Concise summary of the review and overall compliance.",
+  "summary": "Concise summary of the review and overall completeness.",
+  "missingPlans": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.85, "severity": "major" }, ... ],
+  "missingPermits": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.85, "severity": "major" }, ... ],
+  "missingDocumentation": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.85, "severity": "major" }, ... ],
+  "missingInspectionCertificates": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.85, "severity": "major" }, ... ],
   "criticalFindings": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.95, "severity": "critical" }, ... ],
   "majorFindings": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.85, "severity": "major" }, ... ],
   "minorFindings": [ { "description": "...", "codeSection": "...", "remedialAction": "...", "confidenceScore": 0.75, "severity": "minor" }, ... ],
   "totalFindings": 0,
   "isCompliant": true,
-  "cityPlannerEmailBody": "<HTML email body for the city planner>",
-  "submitterEmailBody": "<HTML email body for the submitter>"
+  "cityPlannerEmailBody": "",
+  "submitterEmailBody": ""
 }
 
 Both cityPlannerEmailBody and submitterEmailBody must use the following HTML/CSS style and structure:
 - A large, bold header at the top (blue for compliant, red for action required)
 - A horizontal line below the header
+- A standardized application cover page in a standardized format that identifies the project address, use, zoning, and a list of the submitted files or documents included in the application
 - A short introductory paragraph
 - A green 'Review Summary' subheader
 - The summary text
 - A blue box with rounded corners containing:
   - A bold 'Finding Counts' subheader
   - A bulleted list of counts for critical, major, minor, and total findings
+  - A bulleted list of counts for missing plans, permits, documentation, and inspection certificates
 - A full, detailed list of all findings, sorted by severity (critical, major, minor) and logically grouped together. Each finding should include its description, code section, severity, confidence score, and remedial action. This detailed list must be present in both emails.
+- A full, detailed list of all missing items, sorted by category (plans, permits, documentation, inspection certificates) and logically grouped together.
 - (For submitter only) A section for 'Next Steps' with a numbered list
 - A gray footer paragraph in small text
 
@@ -236,76 +291,29 @@ The footer must be as follows:
 
 Use this structure and style for both emails, only changing the header color/text, intro, content, and footer as appropriate for each recipient and compliance status. Use inline CSS for all styling. Do not include any other text in your response except the JSON object.
 
-Example for compliant plan (cityPlannerEmailBody):
-<div style="color: #0066cc; font-size: 24px; font-weight: bold;">Plan Review Complete - Compliant with Building Codes</div>
-<hr>
-<p>Dear City Planner,</p>
-<p>We have completed the review of the architectural plans submitted for the property at [ADDRESS]. The plans are compliant with all applicable building codes and regulations.</p>
-<h3 style="color: #2e8b57;">Review Summary</h3>
-<p>[SUMMARY TEXT]</p>
-<div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
-  <h4 style="color: #0066cc; margin-top: 0;">Finding Counts</h4>
-  <ul>
-    <li>Critical Findings: 0</li>
-    <li>Major Findings: 0</li>
-    <li>Minor Findings: 2</li>
-    <li>Total Findings: 2</li>
-  </ul>
-</div>
-<h3>Detailed Findings</h3>
-<div style="margin-left: 20px;">
-  <h4>Minor Findings</h4>
-  <div>
-    <p><strong>1. [Finding Description]</strong></p>
-    <p>Code Section: [CODE SECTION]</p>
-    <p>Confidence: 85%</p>
-    <p>Remedial Action: [ACTION]</p>
-  </div>
-  <!-- Additional findings here -->
-</div>
-<div style="font-size: 12px; color: #666; margin-top: 20px;">
-  This email was automatically generated by CivicStream. The attached plan has been reviewed by AI and meets the requirements for direct submission to city planning.
-</div>
+FOURTH, perform a complete review of the files submitted. To perform the review:
 
-Example for non-compliant plan (submitterEmailBody):
-<div style="color: #cc0000; font-size: 24px; font-weight: bold;">Plan Review Complete - Action Required</div>
-<hr>
-<p>Dear Plan Submitter,</p>
-<p>We have completed the review of your architectural plans submitted for the property at [ADDRESS]. Your plans require some modifications before they can be approved.</p>
-<h3 style="color: #2e8b57;">Review Summary</h3>
-<p>[SUMMARY TEXT]</p>
-<div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px;">
-  <h4 style="color: #0066cc; margin-top: 0;">Finding Counts</h4>
-  <ul>
-    <li>Critical Findings: 1</li>
-    <li>Major Findings: 2</li>
-    <li>Minor Findings: 3</li>
-    <li>Total Findings: 6</li>
-  </ul>
-</div>
-<h3>Detailed Findings</h3>
-<div style="margin-left: 20px;">
-  <h4>Critical Findings</h4>
-  <div>
-    <p><strong>1. [Finding Description]</strong></p>
-    <p>Code Section: [CODE SECTION]</p>
-    <p>Confidence: 95%</p>
-    <p>Remedial Action: [ACTION]</p>
-  </div>
-  <!-- Additional findings here -->
-</div>
-<h3>Next Steps</h3>
-<ol>
-  <li>Review all findings in detail</li>
-  <li>Make the necessary corrections to your plans</li>
-  <li>Resubmit your corrected plans through our system</li>
-</ol>
-<div style="font-size: 12px; color: #666; margin-top: 20px;">
-  This email was automatically generated by CivicStream. The attached plan has been reviewed by AI and does not meet the requirements for direct submission to city planning.
-</div>
+1. Extract or utilize a provided address and parcel number from uploaded PDF architectural plans to identify the specific municipality and applicable codes, cross-checking the address with the parcel number to ensure accuracy. These are required for every set of plans and must be included in the web search query. They are typically found in the top right corner of the plans. The plans will include either the city name, county name, parcel number, or a combination of these. The web search query should include the city name, county name, or both.
+
+2. Use web search capabilities to access and verify the most current international building code, municipal zoning code, and state and local zoning and planning codes as of the submission date based on the identified municipality. Cross reference all municipal, county, and state regulations to identify all required documents, certifications, reports, plans, approvals, will-serve letters, and inspections that are required for a proposed project of this type.
+
+3. Analyze the plans, which include a scale, compass, legend, and a general information table, along with accompanying documents (e.g., full plan sets, required inspection certificates, surveys, stormwater management plans, traffic studies).
+
+4. For each missing component, provide:
+   - The type of component missing ("plan", "information", "documentation", "certifications", "report", "approvals", "will-serve letters", "inspections" or "other")
+   - The specific regulation that requires the component in question (with section numbers and hyperlinks if available)
+   - A hyperlink to where the missing regulation can be found
+
+5. For each finding, provide:
+   - A clear description of the issue
+   - The specific code section violated (with section numbers and hyperlinks if available)
+   - Severity ("critical", "major", or "minor")
+   - Confidence score (0.0–1.0)
+   - Explicit remedial actions to comply with the code
 
 The cityPlannerEmailBody should:
 - Be addressed to a city planner
+- Include a standardized application summary describing the project
 - Confirm compliance status
 - List any minor findings
 - Use a professional tone
@@ -313,6 +321,7 @@ The cityPlannerEmailBody should:
 The submitterEmailBody should:
 - Be addressed to the plan submitter
 - List all findings (critical, major, minor)
+- List all missing items by category
 - Include a 'Next Steps' section with:
   1. Review all findings in detail
   2. Make the necessary corrections to your plans
@@ -332,8 +341,20 @@ export interface ReviewFinding {
   remedialAction: string;
 }
 
+export interface MissingItem {
+  description: string;
+  codeSection: string;
+  remedialAction: string;
+  confidenceScore: number;
+  severity: "critical" | "major" | "minor";
+}
+
 export interface ReviewResult {
   summary: string;
+  missingPlans: MissingItem[];
+  missingPermits: MissingItem[];
+  missingDocumentation: MissingItem[];
+  missingInspectionCertificates: MissingItem[];
   criticalFindings: ReviewFinding[];
   majorFindings: ReviewFinding[];
   minorFindings: ReviewFinding[];
@@ -419,7 +440,7 @@ Please extract key information from this architectural plan chunk. Do not perfor
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages,
-      max_tokens: 1000,
+      max_tokens: 10000,
       stream: false
     });
 
@@ -547,7 +568,7 @@ Please analyze the consolidated metadata from these architectural plans and use 
         messages: baseMessages,
         tools,
         tool_choice: "auto",
-        max_tokens: 4096,
+        max_tokens: 10000,
         stream: false
       });
 
@@ -595,7 +616,7 @@ Please analyze the consolidated metadata from these architectural plans and use 
           }
         ],
         stream: false,
-        max_tokens: 4096
+        max_tokens: 10000
       });
 
       const fullResponse = finalResponse.choices[0].message.content;
@@ -633,9 +654,11 @@ Please analyze the consolidated metadata from these architectural plans and use 
             '<div style="', // Header styling
             '<hr>', // Horizontal line
             '<h3', // Section headings
+            'Application Cover Page', // New requirement
             'Review Summary',
             'Finding Counts',
             'Detailed Findings',
+            'Missing Items', // New requirement
             'Counts',
             'Findings:',
           ];
@@ -666,6 +689,10 @@ Please analyze the consolidated metadata from these architectural plans and use 
 
         return {
           summary: result.summary,
+          missingPlans: result.missingPlans || [],
+          missingPermits: result.missingPermits || [],
+          missingDocumentation: result.missingDocumentation || [],
+          missingInspectionCertificates: result.missingInspectionCertificates || [],
           criticalFindings: result.criticalFindings,
           majorFindings: result.majorFindings,
           minorFindings: result.minorFindings,
@@ -769,7 +796,7 @@ Please analyze the complete set of architectural plans and use the web_search to
         messages: baseMessages,
         tools,
         tool_choice: "auto",
-        max_tokens: 4096,
+        max_tokens: 10000,
         stream: false
       });
 
@@ -817,7 +844,7 @@ Please analyze the complete set of architectural plans and use the web_search to
           }
         ],
         stream: false,
-        max_tokens: 4096
+        max_tokens: 10000
       });
 
       const fullResponse = stream.choices[0].message.content;
@@ -855,9 +882,11 @@ Please analyze the complete set of architectural plans and use the web_search to
             '<div style="', // Header styling
             '<hr>', // Horizontal line
             '<h3', // Section headings
+            'Application Cover Page', // New requirement
             'Review Summary',
             'Finding Counts',
             'Detailed Findings',
+            'Missing Items', // New requirement
             'Counts',
             'Findings:',
           ];
@@ -900,6 +929,10 @@ Please analyze the complete set of architectural plans and use the web_search to
 
         return {
           summary: result.summary,
+          missingPlans: result.missingPlans || [],
+          missingPermits: result.missingPermits || [],
+          missingDocumentation: result.missingDocumentation || [],
+          missingInspectionCertificates: result.missingInspectionCertificates || [],
           criticalFindings: result.criticalFindings,
           majorFindings: result.majorFindings,
           minorFindings: result.minorFindings,
@@ -940,6 +973,10 @@ function ensureEmailFormatting(
   emailBody: string,
   result: {
     summary: string;
+    missingPlans: MissingItem[];
+    missingPermits: MissingItem[];
+    missingDocumentation: MissingItem[];
+    missingInspectionCertificates: MissingItem[];
     criticalFindings: ReviewFinding[];
     majorFindings: ReviewFinding[];
     minorFindings: ReviewFinding[];
@@ -1005,6 +1042,61 @@ function ensureEmailFormatting(
     });
   }
 
+  // Build missing items section
+  let missingItemsHtml = '';
+
+  if (result.missingPlans.length > 0) {
+    missingItemsHtml += `<h4>Missing Plans</h4>`;
+    result.missingPlans.forEach((item, idx) => {
+      missingItemsHtml += `
+      <div>
+        <p><strong>${idx + 1}. ${item.description}</strong></p>
+        <p>Code Section: ${item.codeSection}</p>
+        <p>Confidence: ${Math.round(item.confidenceScore * 100)}%</p>
+        <p>Remedial Action: ${item.remedialAction}</p>
+      </div>`;
+    });
+  }
+
+  if (result.missingPermits.length > 0) {
+    missingItemsHtml += `<h4>Missing Permits & Applications</h4>`;
+    result.missingPermits.forEach((item, idx) => {
+      missingItemsHtml += `
+      <div>
+        <p><strong>${idx + 1}. ${item.description}</strong></p>
+        <p>Code Section: ${item.codeSection}</p>
+        <p>Confidence: ${Math.round(item.confidenceScore * 100)}%</p>
+        <p>Remedial Action: ${item.remedialAction}</p>
+      </div>`;
+    });
+  }
+
+  if (result.missingDocumentation.length > 0) {
+    missingItemsHtml += `<h4>Missing Documentation</h4>`;
+    result.missingDocumentation.forEach((item, idx) => {
+      missingItemsHtml += `
+      <div>
+        <p><strong>${idx + 1}. ${item.description}</strong></p>
+        <p>Code Section: ${item.codeSection}</p>
+        <p>Confidence: ${Math.round(item.confidenceScore * 100)}%</p>
+        <p>Remedial Action: ${item.remedialAction}</p>
+      </div>`;
+    });
+  }
+
+  if (result.missingInspectionCertificates.length > 0) {
+    missingItemsHtml += `<h4>Missing Inspection Certificates</h4>`;
+    result.missingInspectionCertificates.forEach((item, idx) => {
+      missingItemsHtml += `
+      <div>
+        <p><strong>${idx + 1}. ${item.description}</strong></p>
+        <p>Code Section: ${item.codeSection}</p>
+        <p>Confidence: ${Math.round(item.confidenceScore * 100)}%</p>
+        <p>Remedial Action: ${item.remedialAction}</p>
+      </div>`;
+    });
+  }
+
   // Add Next Steps section for submitter
   const nextStepsHtml = isSubmitter && !result.isCompliant ? `
   <h3>Next Steps</h3>
@@ -1023,6 +1115,11 @@ function ensureEmailFormatting(
   return `
 <div style="color: ${headerColor}; font-size: 24px; font-weight: bold;">${headerText}</div>
 <hr>
+<h3>Application Cover Page</h3>
+<p><strong>Project Address:</strong> [ADDRESS]</p>
+<p><strong>Use:</strong> [PROJECT TYPE]</p>
+<p><strong>Zoning:</strong> [ZONING]</p>
+<p><strong>Submitted Files:</strong> [FILE LIST]</p>
 <p>Dear ${recipient},</p>
 <p>${introText}</p>
 <h3 style="color: #2e8b57;">Review Summary</h3>
@@ -1035,10 +1132,20 @@ function ensureEmailFormatting(
     <li>Minor Findings: ${result.minorFindings.length}</li>
     <li>Total Findings: ${result.totalFindings}</li>
   </ul>
+  <ul>
+    <li>Missing Plans: ${result.missingPlans.length}</li>
+    <li>Missing Permits: ${result.missingPermits.length}</li>
+    <li>Missing Documentation: ${result.missingDocumentation.length}</li>
+    <li>Missing Inspection Certificates: ${result.missingInspectionCertificates.length}</li>
+  </ul>
 </div>
 <h3>Detailed Findings</h3>
 <div style="margin-left: 20px;">
   ${findingsHtml}
+</div>
+<h3>Missing Items</h3>
+<div style="margin-left: 20px;">
+  ${missingItemsHtml}
 </div>
 ${nextStepsHtml}
 <div style="font-size: 12px; color: #666; margin-top: 20px;">
@@ -1050,6 +1157,10 @@ function getDefaultErrorResponse(): ReviewResult {
   // For testing purposes, provide a valid but minimal response
   return {
     summary: "Our system was able to process your plan but couldn't perform a detailed review at this time.",
+    missingPlans: [],
+    missingPermits: [],
+    missingDocumentation: [],
+    missingInspectionCertificates: [],
     criticalFindings: [],
     majorFindings: [],
     minorFindings: [],
@@ -1368,6 +1479,10 @@ Make sure to follow exactly the same format as specified in your instructions.`;
       }
       return {
         summary: result.summary,
+        missingPlans: result.missingPlans || [],
+        missingPermits: result.missingPermits || [],
+        missingDocumentation: result.missingDocumentation || [],
+        missingInspectionCertificates: result.missingInspectionCertificates || [],
         criticalFindings: result.criticalFindings,
         majorFindings: result.majorFindings,
         minorFindings: result.minorFindings,
