@@ -53,19 +53,34 @@ function validateEnvironment() {
     const issues: string[] = [];
     const envVars: Record<string, string | undefined> = {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
         NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
-        BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN
+        BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN,
+        PERPLEXITY_API_KEY: process.env.PERPLEXITY_API_KEY,
+        SERPAPI_API_KEY: process.env.SERPAPI_API_KEY
     };
 
-    Object.entries(envVars).forEach(([key, value]) => {
-        if (!value) {
-            issues.push(`${key} is missing`);
+    // Critical environment variables
+    const criticalVars = ['NEXT_PUBLIC_API_BASE_URL', 'BLOB_READ_WRITE_TOKEN', 'ANTHROPIC_API_KEY'];
+    const optionalVars = ['OPENAI_API_KEY', 'PERPLEXITY_API_KEY', 'SERPAPI_API_KEY'];
+
+    criticalVars.forEach(key => {
+        if (!envVars[key]) {
+            issues.push(`${key} is missing (critical)`);
+        }
+    });
+
+    const warnings: string[] = [];
+    optionalVars.forEach(key => {
+        if (!envVars[key]) {
+            warnings.push(`${key} is missing (optional)`);
         }
     });
 
     return {
         isValid: issues.length === 0,
         issues,
+        warnings,
         envVars: Object.keys(envVars).reduce<Record<string, string | undefined>>((acc, key) => ({
             ...acc,
             [key]: envVars[key] ? `${envVars[key]?.substring(0, 4)}...${envVars[key]?.substring(envVars[key]!.length - 4)}` : undefined
@@ -85,6 +100,7 @@ export async function POST(req: NextRequest) {
             requestId,
             isValid: envCheck.isValid,
             issues: envCheck.issues,
+            warnings: envCheck.warnings,
             envVars: envCheck.envVars
         });
 
@@ -160,7 +176,7 @@ async function processSubmission(body: any, requestId: string) {
             city,
             county,
             projectSummary,
-            useClaude = false // Optional parameter to use Claude instead of OpenAI
+            useClaude = true // Optional parameter to use Claude instead of OpenAI (default: true)
         } = body;
 
         logWithContext('info', 'Extracted request parameters', {
@@ -256,8 +272,23 @@ async function processSubmission(body: any, requestId: string) {
                     const reviewStartTime = Date.now();
 
                     if (useClaude) {
-                        logWithContext('info', 'Using Claude API for PDF review', { requestId });
-                        reviewResult = await reviewPlanWithClaude(pdfBuffer, fileName, projectDetails);
+                        logWithContext('info', 'Using Claude API for PDF review', { 
+                            requestId,
+                            anthropicKeyPresent: !!process.env.ANTHROPIC_API_KEY,
+                            perplexityKeyPresent: !!process.env.PERPLEXITY_API_KEY,
+                            serpApiKeyPresent: !!process.env.SERPAPI_API_KEY
+                        });
+                        try {
+                            reviewResult = await reviewPlanWithClaude(pdfBuffer, fileName, projectDetails);
+                            logWithContext('info', 'Claude API call completed successfully', { requestId });
+                        } catch (claudeError) {
+                            logWithContext('error', 'Claude API call failed', {
+                                requestId,
+                                error: claudeError instanceof Error ? claudeError.message : 'Unknown error',
+                                stack: claudeError instanceof Error ? claudeError.stack : undefined
+                            });
+                            throw claudeError;
+                        }
                     } else {
                         logWithContext('info', 'Using OpenAI Responses API for PDF review', { requestId });
                         reviewResult = await reviewPlanWithResponsesAPI(pdfBuffer, fileName, projectDetails);
@@ -410,7 +441,21 @@ async function processSubmission(body: any, requestId: string) {
                 const reviewStartTime = Date.now();
 
                 if (useClaude) {
-                    reviewResult = await reviewWithMetadataWithClaude(metadataResults as ClaudePlanMetadata[], projectDetails);
+                    logWithContext('info', 'Using Claude for metadata review', { 
+                        requestId,
+                        metadataCount: metadataResults.length 
+                    });
+                    try {
+                        reviewResult = await reviewWithMetadataWithClaude(metadataResults as ClaudePlanMetadata[], projectDetails);
+                        logWithContext('info', 'Claude metadata review completed successfully', { requestId });
+                    } catch (claudeError) {
+                        logWithContext('error', 'Claude metadata review failed', {
+                            requestId,
+                            error: claudeError instanceof Error ? claudeError.message : 'Unknown error',
+                            stack: claudeError instanceof Error ? claudeError.stack : undefined
+                        });
+                        throw claudeError;
+                    }
                 } else {
                     reviewResult = await reviewWithMetadata(metadataResults, projectDetails);
                 }
