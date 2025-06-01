@@ -30,13 +30,8 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
-// Constants for chunking
-const MAX_CHUNK_SIZE = 4 * 1024 * 1024; // 4MB chunks to stay under 4.5MB limit
-
-// Generate a random ID for the file
-function generateFileId(): string {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-}
+// AWS API Gateway endpoint for direct submission
+const AWS_API_ENDPOINT = 'https://sn1fh1nhzl.execute-api.us-west-2.amazonaws.com/prod/submit-plan';
 
 // Simplified submission status type
 type SubmissionStatusType = 'idle' | 'uploading' | 'success' | 'error';
@@ -123,79 +118,19 @@ export function SubmissionForm() {
     multiple: false,
   });
 
-  // Function to chunk a file and upload it
-  const uploadFileInChunks = async (file: File): Promise<string> => {
-    // Generate a unique ID for this file upload
-    const fileId = generateFileId();
-    const chunkSize = MAX_CHUNK_SIZE;
-    const fileSize = file.size;
-    const chunks = Math.ceil(fileSize / chunkSize);
-    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
-
-    console.log(`Uploading file in ${chunks} chunks of ${chunkSize / (1024 * 1024)}MB each`);
-
-    // Upload each chunk
-    for (let i = 0; i < chunks; i++) {
-      const start = i * chunkSize;
-      const end = Math.min(fileSize, start + chunkSize);
-      const chunk = file.slice(start, end);
-
-      // Create a FormData for this chunk
-      const formData = new FormData();
-      formData.append('chunk', chunk);
-      formData.append('index', i.toString());
-      formData.append('total', chunks.toString());
-      formData.append('fileName', file.name);
-      formData.append('fileId', fileId);
-
-      try {
-        const response = await fetch(`${baseUrl}/api/upload`, {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || `Failed to upload chunk ${i}`);
-        }
-
-        // Update progress
-        setUploadProgress(Math.round(((i + 1) / chunks) * 80)); // 80% for chunk uploads
-
-        console.log(`Uploaded chunk ${i + 1}/${chunks}`);
-      } catch (error) {
-        console.error(`Error uploading chunk ${i}:`, error);
-        throw error;
-      }
-    }
-
-    // Request server to reassemble chunks
-    try {
-      const reassembleFormData = new FormData();
-      reassembleFormData.append('fileId', fileId);
-      reassembleFormData.append('action', 'reassemble');
-
-      setUploadProgress(85); // 85% for reassembly start
-
-      const response = await fetch(`${baseUrl}/api/upload`, {
-        method: 'POST',
-        body: reassembleFormData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to reassemble chunks');
-      }
-
-      setUploadProgress(95); // 95% for reassembly complete
-
-      const { url } = await response.json();
-      console.log('File reassembled successfully:', url);
-      return url;
-    } catch (error) {
-      console.error('Error reassembling chunks:', error);
-      throw error;
-    }
+  // Convert file to base64 for AWS submission
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const result = reader.result as string;
+        // Remove the data:application/pdf;base64, prefix
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = error => reject(error);
+    });
   };
 
   const onSubmit = async (data: FormValues) => {
@@ -213,68 +148,46 @@ export function SubmissionForm() {
     setUploadProgress(0);
 
     try {
-      // Use chunked upload if file is larger than 4MB
-      let blobUrl;
-      if (file.size > MAX_CHUNK_SIZE) {
-        console.log(`File size (${(file.size / (1024 * 1024)).toFixed(2)}MB) exceeds ${MAX_CHUNK_SIZE / (1024 * 1024)}MB, using chunked upload`);
-        blobUrl = await uploadFileInChunks(file);
-      } else {
-        // Use regular upload for small files
-        console.log(`File size (${(file.size / (1024 * 1024)).toFixed(2)}MB) is under ${MAX_CHUNK_SIZE / (1024 * 1024)}MB, using regular upload`);
-        const formData = new FormData();
-        formData.append('file', file);
+      // Convert file to base64 for direct AWS submission
+      console.log(`Converting file (${(file.size / (1024 * 1024)).toFixed(2)}MB) to base64 for AWS submission`);
+      setUploadProgress(25);
+      
+      const base64Data = await fileToBase64(file);
+      setUploadProgress(50);
+      
+      console.log(`File converted to base64, length: ${base64Data.length}`);
 
-        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
-        const uploadResponse = await fetch(`${baseUrl}/api/upload`, {
-          method: 'POST',
-          body: formData,
-        });
+      // Prepare submission data for AWS API Gateway (matching Lambda function expected fields)
+      const submissionData = {
+        fileName: file.name,
+        pdfBuffer: base64Data,
+        submitterEmail: data.submitterEmail,
+        cityPlannerEmail: data.cityPlannerEmail,
+        address: data.address,
+        parcelNumber: data.parcelNumber,
+        city: data.city,
+        county: data.county,
+        projectSummary: data.projectSummary || ''
+      };
 
-        if (!uploadResponse.ok) {
-          const errorData = await uploadResponse.json();
-          throw new Error(errorData.error || 'Failed to upload file');
-        }
-
-        const { url } = await uploadResponse.json();
-        blobUrl = url;
-        setUploadProgress(95);
-      }
-
-      if (!blobUrl) {
-        throw new Error('Invalid upload response');
-      }
-
-      // At this point the file is successfully uploaded
-      setUploadProgress(100);
-
-      // Submit form data with blob URL - this initiates background processing
-      const submissionFormData = new FormData();
-      submissionFormData.append('blobUrl', blobUrl);
-      submissionFormData.append('submitterEmail', data.submitterEmail);
-      submissionFormData.append('cityPlannerEmail', data.cityPlannerEmail);
-      submissionFormData.append('address', data.address);
-      submissionFormData.append('parcelNumber', data.parcelNumber);
-      submissionFormData.append('city', data.city);
-      submissionFormData.append('county', data.county);
-      if (data.projectSummary) {
-        submissionFormData.append('projectSummary', data.projectSummary);
-      }
-      submissionFormData.append('useClaude', data.useClaude ? 'true' : 'false');
-
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
-
-      // Send the submission and wait for confirmation that background processing started
-      const response = await fetch(`${baseUrl}/api/submit-plan`, {
+      setUploadProgress(75);
+      
+      // Submit directly to AWS API Gateway endpoint
+      console.log('Submitting to AWS API Gateway:', AWS_API_ENDPOINT);
+      const response = await fetch(AWS_API_ENDPOINT, {
         method: 'POST',
-        body: submissionFormData,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(submissionData),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to submit plan');
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error occurred' }));
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
 
-      // Background processing has been initiated successfully
+      setUploadProgress(100);
       setSubmissionStatus('success');
 
       toast({
@@ -284,7 +197,6 @@ export function SubmissionForm() {
 
       // Brief delay to show success state before resetting
       setTimeout(() => {
-        // Reset form immediately
         form.reset();
         setFile(null);
         setUploadProgress(0);
@@ -386,11 +298,13 @@ export function SubmissionForm() {
                   <div className="space-y-2">
                     <Progress value={uploadProgress} />
                     <p className="text-xs text-muted-foreground text-center">
-                      {uploadProgress < 95
-                        ? `Uploading: ${uploadProgress}%`
-                        : uploadProgress === 100
-                          ? 'Upload complete! Submitting for analysis...'
-                          : 'Finalizing upload...'}
+                      {uploadProgress < 50
+                        ? `Preparing file: ${uploadProgress}%`
+                        : uploadProgress < 75
+                          ? 'Converting file for submission...'
+                          : uploadProgress < 100
+                            ? 'Submitting to analysis queue...'
+                            : 'Submission complete!'}
                     </p>
                   </div>
                 )}
