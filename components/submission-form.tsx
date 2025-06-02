@@ -215,6 +215,7 @@ export function SubmissionForm() {
       }
 
       setUploadProgress(100);
+      setUploadProgress(100);
       setSubmissionStatus('success');
 
       toast({
