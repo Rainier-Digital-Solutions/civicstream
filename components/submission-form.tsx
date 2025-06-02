@@ -31,7 +31,7 @@ const formSchema = z.object({
 type FormValues = z.infer<typeof formSchema>;
 
 // AWS HTTP API Gateway endpoints for S3 presigned upload pattern
-const AWS_UPLOAD_HANDLER_ENDPOINT = process.env.NEXT_PUBLIC_AWS_UPLOAD_HANDLER_ENDPOINT || '';
+const AWS_UPLOAD_HANDLER_ENDPOINT = 'https://v9cmp61l9d.execute-api.us-west-2.amazonaws.com/prod/upload-handler';
 
 // Enhanced submission status type for multi-step upload
 type SubmissionStatusType = 'idle' | 'getting-upload-url' | 'uploading-to-s3' | 'triggering-processing' | 'success' | 'error';
