@@ -30,8 +30,8 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
-// AWS API Gateway endpoint for direct submission
-const AWS_API_ENDPOINT = 'https://sn1fh1nhzl.execute-api.us-west-2.amazonaws.com/prod/submit-plan';
+// AWS HTTP API Gateway endpoint for direct submission (supports larger payloads)
+const AWS_API_ENDPOINT = 'https://v9cmp61l9d.execute-api.us-west-2.amazonaws.com/prod/submit-plan';
 
 // Simplified submission status type
 type SubmissionStatusType = 'idle' | 'uploading' | 'success' | 'error';
@@ -151,10 +151,10 @@ export function SubmissionForm() {
       // Convert file to base64 for direct AWS submission
       console.log(`Converting file (${(file.size / (1024 * 1024)).toFixed(2)}MB) to base64 for AWS submission`);
       setUploadProgress(25);
-      
+
       const base64Data = await fileToBase64(file);
       setUploadProgress(50);
-      
+
       console.log(`File converted to base64, length: ${base64Data.length}`);
 
       // Prepare submission data for AWS API Gateway (matching Lambda function expected fields)
@@ -171,7 +171,7 @@ export function SubmissionForm() {
       };
 
       setUploadProgress(75);
-      
+
       // Submit directly to AWS API Gateway endpoint
       console.log('Submitting to AWS API Gateway:', AWS_API_ENDPOINT);
       const response = await fetch(AWS_API_ENDPOINT, {
