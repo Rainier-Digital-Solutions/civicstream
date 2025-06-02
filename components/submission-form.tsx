@@ -30,11 +30,11 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
-// AWS API Gateway endpoint for direct submission
-const AWS_API_ENDPOINT = 'https://sn1fh1nhzl.execute-api.us-west-2.amazonaws.com/prod/submit-plan';
+// AWS HTTP API Gateway endpoints for S3 presigned upload pattern
+const AWS_UPLOAD_HANDLER_ENDPOINT = 'https://v9cmp61l9d.execute-api.us-west-2.amazonaws.com/prod/upload-handler';
 
-// Simplified submission status type
-type SubmissionStatusType = 'idle' | 'uploading' | 'success' | 'error';
+// Enhanced submission status type for multi-step upload
+type SubmissionStatusType = 'idle' | 'getting-upload-url' | 'uploading-to-s3' | 'triggering-processing' | 'success' | 'error';
 
 export function SubmissionForm() {
   const [file, setFile] = useState<FileWithPreview | null>(null);
@@ -118,20 +118,6 @@ export function SubmissionForm() {
     multiple: false,
   });
 
-  // Convert file to base64 for AWS submission
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const result = reader.result as string;
-        // Remove the data:application/pdf;base64, prefix
-        const base64 = result.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = error => reject(error);
-    });
-  };
 
   const onSubmit = async (data: FormValues) => {
     if (!file) {
@@ -144,49 +130,91 @@ export function SubmissionForm() {
     }
 
     setIsSubmitting(true);
-    setSubmissionStatus('uploading');
+    setSubmissionStatus('getting-upload-url');
     setUploadProgress(0);
 
     try {
-      // Convert file to base64 for direct AWS submission
-      console.log(`Converting file (${(file.size / (1024 * 1024)).toFixed(2)}MB) to base64 for AWS submission`);
-      setUploadProgress(25);
-      
-      const base64Data = await fileToBase64(file);
-      setUploadProgress(50);
-      
-      console.log(`File converted to base64, length: ${base64Data.length}`);
+      console.log(`Starting S3 presigned upload for file (${(file.size / (1024 * 1024)).toFixed(2)}MB): ${file.name}`);
 
-      // Prepare submission data for AWS API Gateway (matching Lambda function expected fields)
-      const submissionData = {
-        fileName: file.name,
-        pdfBuffer: base64Data,
-        submitterEmail: data.submitterEmail,
-        cityPlannerEmail: data.cityPlannerEmail,
-        address: data.address,
-        parcelNumber: data.parcelNumber,
-        city: data.city,
-        county: data.county,
-        projectSummary: data.projectSummary || ''
-      };
+      // Step 1: Get presigned upload URL from AWS
+      setUploadProgress(10);
+      console.log('Step 1: Getting presigned upload URL...');
 
-      setUploadProgress(75);
-      
-      // Submit directly to AWS API Gateway endpoint
-      console.log('Submitting to AWS API Gateway:', AWS_API_ENDPOINT);
-      const response = await fetch(AWS_API_ENDPOINT, {
+      const uploadUrlResponse = await fetch(AWS_UPLOAD_HANDLER_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(submissionData),
+        body: JSON.stringify({
+          action: 'get-upload-url',
+          fileName: file.name,
+          fileType: file.type,
+          fileSize: file.size
+        }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error occurred' }));
-        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      if (!uploadUrlResponse.ok) {
+        const errorData = await uploadUrlResponse.json().catch(() => ({ error: 'Failed to get upload URL' }));
+        throw new Error(errorData.error || `HTTP ${uploadUrlResponse.status}: ${uploadUrlResponse.statusText}`);
       }
 
+      const uploadData = await uploadUrlResponse.json();
+      console.log('Received presigned upload URL for submission:', uploadData.submissionId);
+
+      // Step 2: Upload file directly to S3 using presigned URL
+      setSubmissionStatus('uploading-to-s3');
+      setUploadProgress(30);
+      console.log('Step 2: Uploading file directly to S3...');
+
+      const s3UploadResponse = await fetch(uploadData.uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': file.type,
+          'Content-Length': file.size.toString()
+        },
+        body: file
+      });
+
+      if (!s3UploadResponse.ok) {
+        throw new Error(`S3 upload failed: HTTP ${s3UploadResponse.status}: ${s3UploadResponse.statusText}`);
+      }
+
+      console.log('File successfully uploaded to S3');
+      setUploadProgress(70);
+
+      // Step 3: Trigger processing after successful upload
+      setSubmissionStatus('triggering-processing');
+      setUploadProgress(85);
+      console.log('Step 3: Triggering plan processing...');
+
+      const processingResponse = await fetch(AWS_UPLOAD_HANDLER_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'process-file',
+          submissionData: {
+            submissionId: uploadData.submissionId,
+            s3Key: uploadData.s3Key,
+            fileName: file.name,
+            submitterEmail: data.submitterEmail,
+            cityPlannerEmail: data.cityPlannerEmail,
+            address: data.address,
+            parcelNumber: data.parcelNumber,
+            city: data.city,
+            county: data.county,
+            projectSummary: data.projectSummary || ''
+          }
+        }),
+      });
+
+      if (!processingResponse.ok) {
+        const errorData = await processingResponse.json().catch(() => ({ error: 'Failed to trigger processing' }));
+        throw new Error(errorData.error || `HTTP ${processingResponse.status}: ${processingResponse.statusText}`);
+      }
+
+      setUploadProgress(100);
       setUploadProgress(100);
       setSubmissionStatus('success');
 
@@ -294,17 +322,19 @@ export function SubmissionForm() {
                 </div>
 
                 {/* Upload progress bar */}
-                {isSubmitting && uploadProgress > 0 && submissionStatus === 'uploading' && (
+                {isSubmitting && uploadProgress > 0 && (
                   <div className="space-y-2">
                     <Progress value={uploadProgress} />
                     <p className="text-xs text-muted-foreground text-center">
-                      {uploadProgress < 50
-                        ? `Preparing file: ${uploadProgress}%`
-                        : uploadProgress < 75
-                          ? 'Converting file for submission...'
-                          : uploadProgress < 100
-                            ? 'Submitting to analysis queue...'
-                            : 'Submission complete!'}
+                      {submissionStatus === 'getting-upload-url'
+                        ? `Getting upload URL: ${uploadProgress}%`
+                        : submissionStatus === 'uploading-to-s3'
+                          ? `Uploading to S3: ${uploadProgress}%`
+                          : submissionStatus === 'triggering-processing'
+                            ? 'Triggering plan processing...'
+                            : uploadProgress === 100
+                              ? 'Submission complete!'
+                              : `Processing: ${uploadProgress}%`}
                     </p>
                   </div>
                 )}
@@ -450,10 +480,12 @@ export function SubmissionForm() {
                   >
                     {isSubmitting ? (
                       <>
-                        {submissionStatus === 'uploading' && (
+                        {(submissionStatus === 'getting-upload-url' || submissionStatus === 'uploading-to-s3' || submissionStatus === 'triggering-processing') && (
                           <>
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Uploading...
+                            {submissionStatus === 'getting-upload-url' ? 'Getting URL...' :
+                              submissionStatus === 'uploading-to-s3' ? 'Uploading...' :
+                                'Processing...'}
                           </>
                         )}
                         {submissionStatus === 'success' && (
