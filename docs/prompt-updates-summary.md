@@ -1,15 +1,16 @@
-# Prompt Updates Summary
+# Claude AI Plan Review Implementation
 
-This document outlines the changes made to implement the CEO's enhanced prompt structure for plan review.
+This document outlines the current implementation of CivicStream's architectural plan review system using Anthropic's Claude AI on AWS infrastructure.
 
 ## Overview
 
-The updates implement a more comprehensive plan review approach that includes:
+The system implements a comprehensive plan review approach that includes:
 1. Application type identification
 2. Missing document analysis by category
 3. Enhanced JSON schema with missing items
-4. Improved email formatting with application cover pages
-5. More thorough review process
+4. Professional HTML email formatting with application cover pages
+5. Building code research via Perplexity API
+6. Background processing via AWS SQS and Lambda
 
 ## Key Changes Made
 
@@ -33,40 +34,41 @@ Added new fields:
 - `missingDocumentation: MissingItem[]`
 - `missingInspectionCertificates: MissingItem[]`
 
-### 2. Updated Prompts
+### 2. Current Implementation
 
-**COMPLIANCE_REVIEW_PROMPT**
-- Changed scope from "Greater Seattle area" to "state of Washington"
-- Added application type identification (FIRST step)
-- Added comprehensive missing document analysis (SECOND step)
-- Defined specific requirements for single-family residence applications:
+**AWS Lambda Processing**
+- Runs in `plan-processor` Lambda function
+- Uses Anthropic Claude Sonnet 4 model
+- Processes PDFs with pdf-parse library
+- Integrates Perplexity API for building code research
+- Sends HTML emails via Nodemailer
+
+**COMPLIANCE_REVIEW_PROMPT (in aws-lambda-fix-index.js)**
+- Scope: Washington state building codes and regulations
+- Application type identification (FIRST step)
+- Comprehensive missing document analysis (SECOND step)
+- Specific requirements for single-family residence applications:
   - Required PLANS (11 items)
   - Required PERMITS AND APPLICATIONS (9 items)
   - Required ADDITIONAL DOCUMENTATION (9 items)
   - Required INSPECTION CERTIFICATES (6 items)
-- Updated JSON schema to include missing items categories
-- Enhanced email requirements with application cover page
+- JSON schema includes missing items categories
+- Professional HTML email templates with application cover page
 
-**CONSOLIDATED_REVIEW_PROMPT**
-- Applied same updates as COMPLIANCE_REVIEW_PROMPT for consistency
-- Maintained focus on metadata-based review
+### 3. Current AWS Lambda Functions
 
-### 3. Updated Functions
+**Main Processing Function:**
+- `reviewPlanWithClaude()` - Core Claude AI integration
+- `performWebSearch()` - Perplexity API integration for building codes
+- `sendEmail()` - HTML email delivery via Nodemailer
+- `getDefaultErrorResponse()` - Fallback response on processing failures
 
-**All review functions updated to return new schema:**
-- `reviewWithMetadata()`
-- `reviewArchitecturalPlan()`
-- `reviewPlanWithResponsesAPI()`
-- `getDefaultErrorResponse()`
-
-**Enhanced email validation:**
-- Added validation for "Application Cover Page" section
-- Added validation for "Missing Items" section
-
-**Updated `ensureEmailFormatting()` function:**
-- Added missing items sections to email generation
-- Added application cover page template
-- Enhanced finding counts to include missing items
+**Enhanced Features:**
+- PDF text extraction with fallback handling
+- Retry logic (up to 3 attempts) for Claude API calls
+- Automatic S3 cleanup after processing
+- Comprehensive error logging
+- Professional HTML email templates
 
 ### 4. Email Template Enhancements
 
@@ -86,14 +88,21 @@ Added new fields:
 8. Next Steps (for submitter only)
 9. Footer
 
-## Review Process Updates
+## Current AWS Processing Workflow
 
-The new review process follows this sequence:
+The review process follows this sequence:
 
-1. **FIRST**: Identify application type from submitted files
-2. **SECOND**: Analyze for missing required documents by category
-3. **THIRD**: Generate structured response with all missing items
-4. **FOURTH**: Perform complete compliance review of submitted files
+1. **Upload**: Frontend gets S3 presigned URL from upload-handler Lambda
+2. **Storage**: File uploaded directly to S3 bucket
+3. **Trigger**: Upload completion sends message to SQS queue
+4. **Processing**: plan-processor Lambda picks up SQS message
+5. **Analysis**: 
+   - Download PDF from S3
+   - Extract text using pdf-parse
+   - Search building codes via Perplexity API
+   - Analyze with Claude AI
+6. **Delivery**: Send HTML emails to submitter and city planner
+7. **Cleanup**: Remove file from S3 bucket
 
 ## Required Documents for Single-Family Residence
 
@@ -140,27 +149,27 @@ The new review process follows this sequence:
 - Insulation
 - Final inspection
 
-## Backward Compatibility
+## Infrastructure Benefits
 
-All changes maintain backward compatibility with existing API routes:
-- Existing API calls will continue to work
-- All existing fields remain in the same format
-- New fields are added alongside existing ones
-- Default values ensure no breaking changes
+1. **Scalability**: AWS Lambda auto-scales based on demand
+2. **Cost Efficiency**: Pay-per-request pricing model
+3. **Reliability**: Built-in retry mechanisms and dead letter queues
+4. **Security**: S3 presigned URLs for secure file uploads
+5. **Performance**: Background processing doesn't block user interface
+6. **Monitoring**: CloudWatch logs for debugging and monitoring
 
-## Benefits of Updates
+## Current Features
 
-1. **More Comprehensive**: Reviews now check for document completeness before compliance
-2. **Better Organized**: Missing items are categorized for easier understanding
-3. **Enhanced UX**: Application cover pages provide better context
-4. **Structured Process**: Clear 4-step review methodology
-5. **Washington State Focus**: More accurate jurisdiction targeting
-6. **Detailed Requirements**: Specific document lists for different application types
+1. **AI-Powered Analysis**: Claude Sonnet 4 for comprehensive plan review
+2. **Building Code Research**: Perplexity API for real-time code lookup
+3. **Professional Communication**: HTML email templates with styling
+4. **Large File Support**: Handles PDFs up to 50MB
+5. **Washington State Focus**: Specialized for WA building codes
+6. **Automatic Cleanup**: S3 lifecycle policies for cost optimization
 
-## Testing
+## Monitoring and Debugging
 
-The implementation has been validated through:
-- Successful TypeScript compilation
-- Build process verification
-- Schema structure validation
-- Backward compatibility testing with existing API routes 
+- **CloudWatch Logs**: All Lambda functions log to CloudWatch
+- **Error Handling**: Comprehensive error logging and fallback responses
+- **Dead Letter Queue**: Failed messages routed to DLQ for investigation
+- **S3 Lifecycle**: Automatic cleanup after 24 hours
