@@ -13,6 +13,8 @@
     "@anthropic-ai/sdk": "^0.52.0",
     "@aws-amplify/auth": "^6.13.0",
     "@aws-amplify/ui-react": "^6.11.2",
+    "@aws-sdk/client-dynamodb": "^3.828.0",
+    "@aws-sdk/lib-dynamodb": "^3.828.0",
     "@dqbd/tiktoken": "^1.0.21",
     "@hookform/resolvers": "^3.9.0",
     "@next/swc-wasm-nodejs": "13.5.1",
