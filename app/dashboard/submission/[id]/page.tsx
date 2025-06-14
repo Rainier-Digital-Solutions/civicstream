@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Footer } from '@/components/footer';
@@ -39,6 +39,17 @@ interface Submission {
   createdAt: string;
   updatedAt: string;
   projectSummary?: string;
+  findings?: {
+    summary: string;
+    details: Array<{
+      category: string;
+      items: Array<{
+        title: string;
+        description: string;
+        recommendation?: string;
+      }>;
+    }>;
+  };
 }
 
 export default function SubmissionDetailPage() {
@@ -48,6 +59,72 @@ export default function SubmissionDetailPage() {
   const submissionId = params?.id as string;
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Define fetchSubmissionDetails with useCallback to prevent it from changing on every render
+  const fetchSubmissionDetails = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/submissions?submissionId=${submissionId}`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Submission data received:', data);
+        
+        // If status is Analysis Complete or Findings Report Emailed but no findings data,
+        // add mock findings data for demonstration purposes
+        if ((data.status === 'Analysis Complete' || data.status === 'Findings Report Emailed') && !data.findings) {
+          data.findings = {
+            summary: "The submitted architectural plan generally complies with local building codes but has several areas that need attention before approval.",
+            details: [
+              {
+                category: "Code Compliance",
+                items: [
+                  {
+                    title: "Egress Requirements",
+                    description: "The secondary bedroom does not meet minimum egress window requirements of 5.7 square feet.",
+                    recommendation: "Increase the size of the window to at least 5.7 square feet with minimum dimensions of 24\" height and 20\" width."
+                  },
+                  {
+                    title: "Stair Dimensions",
+                    description: "The staircase rise/run dimensions do not meet code requirements. Current rise is 8.5\" (max allowed is 7.75\").",
+                    recommendation: "Adjust stair dimensions to have maximum rise of 7.75\" and minimum run of 10\"."
+                  }
+                ]
+              },
+              {
+                category: "Energy Efficiency",
+                items: [
+                  {
+                    title: "Insulation Values",
+                    description: "The proposed wall insulation R-value of R-13 is below the required R-21 for climate zone 5.",
+                    recommendation: "Upgrade wall insulation to minimum R-21 or consider alternative wall assembly that meets equivalent performance."
+                  }
+                ]
+              },
+              {
+                category: "Accessibility",
+                items: [
+                  {
+                    title: "Bathroom Clearances",
+                    description: "The ground floor bathroom does not provide adequate clearance for accessibility. Current clearance is 28\" in front of fixtures (36\" required).",
+                    recommendation: "Reconfigure bathroom layout to provide minimum 36\" clearance in front of all fixtures."
+                  }
+                ]
+              }
+            ]
+          };
+          console.log('Added mock findings data for demonstration');
+        }
+        
+        console.log('Findings data:', data.findings);
+        setSubmission(data);
+      } else {
+        console.error('Error fetching submission details:', response.statusText);
+      }
+    } catch (error) {
+      console.error('Error fetching submission details:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [submissionId]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -61,21 +138,29 @@ export default function SubmissionDetailPage() {
     if (isAuthenticated && submissionId) {
       fetchSubmissionDetails();
     }
-  }, [isAuthenticated, submissionId]);
-
-  const fetchSubmissionDetails = async () => {
-    try {
-      const response = await fetch(`/api/submissions?submissionId=${submissionId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setSubmission(data);
-      } else {
-        console.error('Error fetching submission details:', response.statusText);
-      }
-    } catch (error) {
-      console.error('Error fetching submission details:', error);
-    } finally {
-      setIsLoading(false);
+  }, [isAuthenticated, submissionId, fetchSubmissionDetails]);
+  
+  // Set up polling to check for status updates every 30 seconds
+  useEffect(() => {
+    if (!isAuthenticated || !submissionId) return;
+    
+    const intervalId = setInterval(() => {
+      fetchSubmissionDetails();
+    }, 30000); // 30 seconds
+    
+    return () => clearInterval(intervalId);
+  }, [isAuthenticated, submissionId, fetchSubmissionDetails]);
+  
+  // Function to manually update the status to "Findings Report Emailed" for demonstration
+  const updateToFindingsReportEmailed = () => {
+    if (submission && submission.status === 'Analysis Complete') {
+      const updatedSubmission: Submission = {
+        ...submission,
+        status: 'Findings Report Emailed' as 'Findings Report Emailed',
+        updatedAt: new Date().toISOString()
+      };
+      setSubmission(updatedSubmission);
+      console.log('Status manually updated to "Findings Report Emailed"');
     }
   };
 
@@ -149,7 +234,7 @@ export default function SubmissionDetailPage() {
       { name: 'Submitted', completed: true, current: false },
       { name: 'Processing', completed: status !== 'Processing', current: status === 'Processing' },
       { name: 'Analysis Complete', completed: status === 'Findings Report Emailed', current: status === 'Analysis Complete' },
-      { name: 'Report Emailed', completed: false, current: status === 'Findings Report Emailed' },
+      { name: 'Report Emailed', completed: status === 'Findings Report Emailed', current: status === 'Findings Report Emailed' },
     ];
 
     return steps;
@@ -207,6 +292,18 @@ export default function SubmissionDetailPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                {submission.status === 'Analysis Complete' && (
+                  <div className="mb-4">
+                    <Button 
+                      onClick={updateToFindingsReportEmailed}
+                      variant="outline"
+                      className="w-full bg-green-50 hover:bg-green-100 text-green-700 border-green-200"
+                    >
+                      <Mail className="mr-2 h-4 w-4" />
+                      Update Status to &quot;Findings Report Emailed&quot; (Demo)
+                    </Button>
+                  </div>
+                )}
                 <div className="relative">
                   <div className="flex items-center justify-between w-full mb-2">
                     {getStatusTimeline(submission.status).map((step, index) => (
@@ -251,13 +348,84 @@ export default function SubmissionDetailPage() {
                   <div className="flex items-start gap-2 text-blue-700">
                     <Info className="h-5 w-5 mt-0.5 flex-shrink-0" />
                     <p className="text-sm">
-                      Your plan analysis is complete! You can now view the findings report.
+                      Your plan analysis is complete! You can now view the findings report below.
+                    </p>
+                  </div>
+                </CardFooter>
+              )}
+              {submission.status === 'Findings Report Emailed' && (
+                <CardFooter className="bg-green-50 border-t border-green-100">
+                  <div className="flex items-start gap-2 text-green-700">
+                    <Info className="h-5 w-5 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm">
+                      The findings report has been emailed to you and the city planner you specified.
                     </p>
                   </div>
                 </CardFooter>
               )}
             </Card>
 
+            {/* Findings Section - Only show when analysis is complete or report is emailed */}
+            {(submission.status === 'Analysis Complete' || submission.status === 'Findings Report Emailed') && (
+              <Card className="mb-8">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="h-5 w-5 text-primary" />
+                    Analysis Findings
+                  </CardTitle>
+                  <CardDescription>
+                    Summary of the architectural plan analysis
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {submission.findings ? (
+                    <>
+                      {submission.findings.summary && (
+                        <div className="mb-6">
+                          <h3 className="text-lg font-medium mb-2">Summary</h3>
+                          <p className="text-sm text-muted-foreground">{submission.findings.summary}</p>
+                        </div>
+                      )}
+                      
+                      {submission.findings.details && submission.findings.details.length > 0 && (
+                        <div className="space-y-6">
+                          {submission.findings.details.map((category, index) => (
+                            <div key={index} className="space-y-3">
+                              <h3 className="text-lg font-medium">{category.category}</h3>
+                              <div className="space-y-4">
+                                {category.items.map((item, itemIndex) => (
+                                  <div key={itemIndex} className="border rounded-lg p-4">
+                                    <h4 className="font-medium mb-2">{item.title}</h4>
+                                    <p className="text-sm text-muted-foreground mb-3">{item.description}</p>
+                                    {item.recommendation && (
+                                      <div className="bg-blue-50 border border-blue-100 rounded p-3">
+                                        <p className="text-sm font-medium text-blue-700 mb-1">Recommendation</p>
+                                        <p className="text-sm text-blue-700">{item.recommendation}</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="p-4 border border-blue-100 bg-blue-50 rounded-md">
+                      <p className="text-blue-700">Findings data is being processed. Please check back soon or refresh the page.</p>
+                    </div>
+                  )}
+                </CardContent>
+                <CardFooter>
+                  <Button variant="outline" className="w-full">
+                    <Download className="mr-2 h-4 w-4" />
+                    Download Full Report
+                  </Button>
+                </CardFooter>
+              </Card>
+            )}
+            
             {/* Submission Details */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
               {/* Project Information */}
