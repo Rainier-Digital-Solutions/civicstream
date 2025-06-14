@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import { useDropzone } from 'react-dropzone';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -42,6 +43,7 @@ export function SubmissionForm() {
   const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatusType>('idle');
   const [uploadProgress, setUploadProgress] = useState(0);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -214,13 +216,42 @@ export function SubmissionForm() {
         throw new Error(errorData.error || `HTTP ${processingResponse.status}: ${processingResponse.statusText}`);
       }
 
-      setUploadProgress(100);
+      // Step 4: Save submission to DynamoDB for tracking
+      if (user?.attributes?.sub) {
+        try {
+          const timestamp = new Date().toISOString();
+          await fetch('/api/submissions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              submissionId: uploadData.submissionId,
+              userId: user.attributes.sub,
+              fileName: file.name,
+              fileSize: file.size,
+              address: data.address,
+              parcelNumber: data.parcelNumber,
+              city: data.city,
+              county: data.county,
+              status: 'Processing',
+              createdAt: timestamp,
+              updatedAt: timestamp
+            }),
+          });
+          console.log('Submission saved to database for tracking');
+        } catch (error) {
+          console.error('Error saving submission to database:', error);
+          // Continue even if this fails, as the main submission was successful
+        }
+      }
+
       setUploadProgress(100);
       setSubmissionStatus('success');
 
       toast({
         title: 'Plan submitted successfully!',
-        description: 'Your plan is being analyzed. You will receive the results via email once processing is complete.',
+        description: 'Your plan is being analyzed. You can track its status in your dashboard.',
       });
 
       // Brief delay to show success state before resetting
