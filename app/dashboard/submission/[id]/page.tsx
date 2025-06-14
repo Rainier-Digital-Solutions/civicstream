@@ -387,24 +387,69 @@ export default function SubmissionDetailPage() {
                         </div>
                       )}
                       
+                      {/* Findings Count Box */}
+                      <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-lg">
+                        <h3 className="font-bold text-blue-700 mb-2">Finding Counts</h3>
+                        <ul className="list-disc pl-5 text-sm space-y-1">
+                          {submission.findings.details && submission.findings.details.map((category, idx) => (
+                            <li key={idx} className="text-gray-700">
+                              {category.category}: {category.items.length} finding{category.items.length !== 1 ? 's' : ''}
+                            </li>
+                          ))}
+                          <li className="text-gray-700 font-medium">
+                            Total: {submission.findings.details?.reduce((total, category) => total + category.items.length, 0) || 0} findings
+                          </li>
+                        </ul>
+                      </div>
+                      
+                      {/* Detailed Findings Section */}
                       {submission.findings.details && submission.findings.details.length > 0 && (
-                        <div className="space-y-6">
+                        <div>
+                          <h3 style={{color: '#dc2626', fontSize: '18px', fontWeight: 600, margin: '25px 0 15px 0', borderBottom: '2px solid #dc2626', paddingBottom: '5px'}}>
+                            🔍 Detailed Findings
+                          </h3>
+                          
                           {submission.findings.details.map((category, index) => (
-                            <div key={index} className="space-y-3">
-                              <h3 className="text-lg font-medium">{category.category}</h3>
-                              <div className="space-y-4">
-                                {category.items.map((item, itemIndex) => (
-                                  <div key={itemIndex} className="border rounded-lg p-4">
-                                    <h4 className="font-medium mb-2">{item.title}</h4>
-                                    <p className="text-sm text-muted-foreground mb-3">{item.description}</p>
-                                    {item.recommendation && (
-                                      <div className="bg-blue-50 border border-blue-100 rounded p-3">
-                                        <p className="text-sm font-medium text-blue-700 mb-1">Recommendation</p>
-                                        <p className="text-sm text-blue-700">{item.recommendation}</p>
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
+                            <div key={index} className="mb-6">
+                              <h4 className="text-lg font-medium mb-3">{category.category}</h4>
+                              <div className="space-y-5">
+                                {category.items.map((item, itemIndex) => {
+                                  // Determine severity level styling (using mock severity for demo)
+                                  const severityMap: Record<string, {color: string, bgColor: string, borderColor: string, icon: string, label: string}> = {
+                                    'Code Compliance': {color: '#dc2626', bgColor: '#fef2f2', borderColor: '#dc2626', icon: '🚨', label: 'Critical Finding'},
+                                    'Energy Efficiency': {color: '#ea580c', bgColor: '#fff7ed', borderColor: '#ea580c', icon: '⚠️', label: 'Major Finding'},
+                                    'Accessibility': {color: '#eab308', bgColor: '#fefce8', borderColor: '#eab308', icon: '💡', label: 'Minor Finding'}
+                                  };
+                                  
+                                  // Default to minor if category not in map
+                                  const style = severityMap[category.category] || 
+                                    {color: '#eab308', bgColor: '#fefce8', borderColor: '#eab308', icon: '💡', label: 'Minor Finding'};
+                                  
+                                  return (
+                                    <div 
+                                      key={itemIndex} 
+                                      style={{
+                                        marginBottom: '20px',
+                                        padding: '15px',
+                                        borderLeft: `4px solid ${style.borderColor}`,
+                                        backgroundColor: style.bgColor,
+                                        borderRadius: '4px'
+                                      }}
+                                    >
+                                      <h4 style={{margin: '0 0 10px 0', color: style.color, fontSize: '16px', fontWeight: 600}}>
+                                        {style.icon} {style.label}: {item.title}
+                                      </h4>
+                                      <p style={{margin: '8px 0', color: '#374151'}}>
+                                        <strong style={{color: '#1f2937'}}>Description:</strong> {item.description}
+                                      </p>
+                                      {item.recommendation && (
+                                        <p style={{margin: '8px 0', color: '#374151'}}>
+                                          <strong style={{color: '#1f2937'}}>Remedial Action:</strong> {item.recommendation}
+                                        </p>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
                           ))}
