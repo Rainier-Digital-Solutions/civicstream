@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { useWebSocketSubscription } from '@/lib/websocket';
 import { Footer } from '@/components/footer';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -133,22 +134,33 @@ export default function SubmissionDetailPage() {
     }
   }, [isAuthenticated, loading, router]);
 
-  // Fetch submission details when component mounts
+  // Redirect to login if not authenticated
   useEffect(() => {
-    if (isAuthenticated && submissionId) {
-      fetchSubmissionDetails();
+    if (!loading && !isAuthenticated) {
+      router.push('/login?redirect=/dashboard');
     }
-  }, [isAuthenticated, submissionId, fetchSubmissionDetails]);
+  }, [isAuthenticated, loading, router]);
   
-  // Set up polling to check for status updates every 30 seconds
+  // Use WebSocket for real-time updates instead of polling
+  const hasInitialFetch = useRef(false);
+  
+  useWebSocketSubscription(submissionId as string, (data) => {
+    console.log('Received WebSocket update for submission:', data);
+    if (data && data.status) {
+      // Update submission with new data from WebSocket
+      setSubmission(prevSubmission => {
+        if (!prevSubmission) return data;
+        return { ...prevSubmission, ...data };
+      });
+    }
+  });
+  
+  // Only fetch details once on initial load
   useEffect(() => {
-    if (!isAuthenticated || !submissionId) return;
-    
-    const intervalId = setInterval(() => {
+    if (isAuthenticated && submissionId && !hasInitialFetch.current) {
       fetchSubmissionDetails();
-    }, 30000); // 30 seconds
-    
-    return () => clearInterval(intervalId);
+      hasInitialFetch.current = true;
+    }
   }, [isAuthenticated, submissionId, fetchSubmissionDetails]);
   
   // Function to manually update the status to "Findings Report Emailed" for demonstration
