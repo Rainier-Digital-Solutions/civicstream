@@ -11,6 +11,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
+    "@aws-amplify/auth": "^6.13.0",
+    "@aws-amplify/ui-react": "^6.11.2",
+    "@aws-sdk/client-dynamodb": "^3.828.0",
+    "@aws-sdk/lib-dynamodb": "^3.828.0",
     "@dqbd/tiktoken": "^1.0.21",
     "@hookform/resolvers": "^3.9.0",
     "@next/swc-wasm-nodejs": "13.5.1",
@@ -46,6 +50,7 @@
     "@types/react-dom": "18.2.7",
     "@vercel/blob": "^1.0.1",
     "autoprefixer": "10.4.15",
+    "aws-amplify": "^6.15.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "cmdk": "^1.0.0",
@@ -78,6 +83,10 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@babel/core": "^7.27.4",
+    "@babel/preset-env": "^7.27.2",
+    "@babel/preset-react": "^7.27.1",
+    "@babel/preset-typescript": "^7.27.1",
     "@types/nodemailer": "^6.4.17",
     "husky": "^9.1.7",
     "lint-staged": "^15.5.1"
