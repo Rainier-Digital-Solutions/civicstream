@@ -59,6 +59,7 @@ export default function SubmissionDetailPage() {
   const params = useParams();
   const submissionId = params?.id as string;
   const [submission, setSubmission] = useState<Submission | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<string>(new Date().toISOString());
   const [isLoading, setIsLoading] = useState(true);
 
   // Define fetchSubmissionDetails with useCallback to prevent it from changing on every render
@@ -146,12 +147,32 @@ export default function SubmissionDetailPage() {
   
   useWebSocketSubscription(submissionId as string, (data) => {
     console.log('Received WebSocket update for submission:', data);
+    
+    // Force a re-render by setting a new state object
     if (data && data.status) {
+      console.log(`Updating submission status from ${submission?.status} to ${data.status}`);
+      
       // Update submission with new data from WebSocket
       setSubmission(prevSubmission => {
         if (!prevSubmission) return data;
-        return { ...prevSubmission, ...data };
+        
+        // Create a completely new object to ensure React detects the change
+        const updatedSubmission = { 
+          ...prevSubmission, 
+          status: data.status,
+          findings: data.findings || prevSubmission.findings,
+          // Ensure updatedAt is properly set
+          updatedAt: data.updatedAt || new Date().toISOString()
+        };
+        
+        console.log('Updated submission state:', updatedSubmission);
+        return updatedSubmission;
       });
+      
+      // Force a re-render by setting a timestamp
+      setLastUpdated(new Date().toISOString());
+    } else {
+      console.warn('Received WebSocket update without status information:', data);
     }
   });
   
@@ -163,18 +184,7 @@ export default function SubmissionDetailPage() {
     }
   }, [isAuthenticated, submissionId, fetchSubmissionDetails]);
   
-  // Function to manually update the status to "Findings Report Emailed" for demonstration
-  const updateToFindingsReportEmailed = () => {
-    if (submission && submission.status === 'Analysis Complete') {
-      const updatedSubmission: Submission = {
-        ...submission,
-        status: 'Findings Report Emailed' as 'Findings Report Emailed',
-        updatedAt: new Date().toISOString()
-      };
-      setSubmission(updatedSubmission);
-      console.log('Status manually updated to "Findings Report Emailed"');
-    }
-  };
+  // This function has been removed as we're now using the WebSocket API for real-time updates
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -304,19 +314,8 @@ export default function SubmissionDetailPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {submission.status === 'Analysis Complete' && (
-                  <div className="mb-4">
-                    <Button 
-                      onClick={updateToFindingsReportEmailed}
-                      variant="outline"
-                      className="w-full bg-green-50 hover:bg-green-100 text-green-700 border-green-200"
-                    >
-                      <Mail className="mr-2 h-4 w-4" />
-                      Update Status to &quot;Findings Report Emailed&quot; (Demo)
-                    </Button>
-                  </div>
-                )}
-                <div className="relative">
+                {/* Demo button removed - using WebSocket API for real-time updates */}
+                <div className="relative" key={lastUpdated}>
                   <div className="flex items-center justify-between w-full mb-2">
                     {getStatusTimeline(submission.status).map((step, index) => (
                       <div key={index} className="flex flex-col items-center">

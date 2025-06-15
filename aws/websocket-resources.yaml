@@ -390,6 +390,7 @@ Resources:
               }
               
               const submissionId = newImage.submissionId;
+              console.log(`Processing update for submission ${submissionId}, status: ${newImage.status}`);
               
               // Find all connections subscribed to this submission
               const connections = await ddb.query({
@@ -406,15 +407,25 @@ Resources:
                 continue;
               }
               
+              console.log(`Found ${connections.Items.length} connections for submission ${submissionId}`);
+              
+              // Ensure the endpoint has the proper protocol
+              let endpoint = process.env.WEBSOCKET_API_ENDPOINT;
+              if (!endpoint.startsWith('https://')) {
+                endpoint = `https://${endpoint}`;
+              }
+              
               const apiGateway = new AWS.ApiGatewayManagementApi({
-                endpoint: process.env.WEBSOCKET_API_ENDPOINT
+                endpoint: endpoint
               });
               
-              // Prepare update data
+              // Prepare update data - send the data directly as the submission object
+              // This matches what the frontend expects in the onUpdate callback
               const updateData = {
                 action: 'submissionUpdate',
                 submissionId: submissionId,
                 data: {
+                  submissionId: submissionId,
                   status: newImage.status,
                   findings: newImage.findings,
                   updatedAt: newImage.updatedAt

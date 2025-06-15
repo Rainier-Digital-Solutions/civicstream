@@ -65,14 +65,24 @@ class WebSocketClient {
       
       this.socket.onmessage = (event) => {
         try {
+          console.log('WebSocket message received:', event.data);
           const message = JSON.parse(event.data) as WebSocketMessage;
           
           if (message.action && this.messageHandlers.has(message.action)) {
+            console.log(`Processing message with action: ${message.action}`);
             const handlers = this.messageHandlers.get(message.action);
-            handlers?.forEach(handler => handler(message));
+            handlers?.forEach(handler => {
+              try {
+                handler(message);
+              } catch (handlerError) {
+                console.error('Error in message handler:', handlerError);
+              }
+            });
+          } else {
+            console.log(`No handlers registered for action: ${message.action || 'undefined'}`);
           }
         } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
+          console.error('Error parsing WebSocket message:', error, 'Raw data:', event.data);
         }
       };
       
