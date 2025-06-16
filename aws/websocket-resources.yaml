@@ -1,0 +1,602 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CivicStream WebSocket API for real-time submission updates'
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    Description: Deployment stage (dev, prod)
+  SubmissionsTableName:
+    Type: String
+    Default: CivicStreamSubmissions
+    Description: Name of the existing DynamoDB submissions table
+
+Resources:
+  # WebSocket API Gateway
+  WebSocketAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: CivicStreamWebSocketAPI
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  # WebSocket API Gateway Stage
+  WebSocketAPIStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      StageName: !Ref Stage
+      AutoDeploy: true
+
+  # DynamoDB Table for WebSocket Connections
+  ConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub CivicStreamConnections-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+        - AttributeName: submissionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: SubmissionIdIndex
+          KeySchema:
+            - AttributeName: submissionId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # Custom Resource Lambda to enable DynamoDB Streams on existing table
+  EnableDynamoDBStreamFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt EnableDynamoDBStreamFunctionRole.Arn
+      Runtime: nodejs18.x
+      Timeout: 60
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, UpdateTableCommand, DescribeTableCommand } = require('@aws-sdk/client-dynamodb');
+          const https = require('https');
+          const url = require('url');
+          
+          // Helper function to send response to CloudFormation
+          const sendResponse = async (event, context, responseStatus, responseData, physicalResourceId) => {
+            const responseBody = JSON.stringify({
+              Status: responseStatus,
+              Reason: `See the details in CloudWatch Log Stream: ${context.logStreamName}`,
+              PhysicalResourceId: physicalResourceId || context.logStreamName,
+              StackId: event.StackId,
+              RequestId: event.RequestId,
+              LogicalResourceId: event.LogicalResourceId,
+              Data: responseData
+            });
+          
+            console.log('Response body:', responseBody);
+          
+            const parsedUrl = url.parse(event.ResponseURL);
+            const options = {
+              hostname: parsedUrl.hostname,
+              port: 443,
+              path: parsedUrl.path,
+              method: 'PUT',
+              headers: {
+                'content-type': '',
+                'content-length': responseBody.length
+              }
+            };
+          
+            return new Promise((resolve, reject) => {
+              const request = https.request(options, (response) => {
+                console.log(`Status code: ${response.statusCode}`);
+                resolve();
+              });
+          
+              request.on('error', (error) => {
+                console.log(`Send response error: ${error}`);
+                reject(error);
+              });
+          
+              request.write(responseBody);
+              request.end();
+            });
+          };
+          
+          exports.handler = async (event, context) => {
+            console.log('Event:', JSON.stringify(event, null, 2));
+            
+            // Extract the table name from the event
+            const tableName = event.ResourceProperties.TableName;
+            
+            // Initialize DynamoDB client
+            const dynamodb = new DynamoDBClient();
+            
+            try {
+              if (event.RequestType === 'Create' || event.RequestType === 'Update') {
+                // First, describe the table to check if streams are already enabled
+                const describeParams = {
+                  TableName: tableName
+                };
+                
+                console.log('Describing table with params:', JSON.stringify(describeParams, null, 2));
+                
+                const describeCommand = new DescribeTableCommand(describeParams);
+                const tableDescription = await dynamodb.send(describeCommand);
+                console.log('Table description:', JSON.stringify(tableDescription, null, 2));
+                
+                // Check if streams are already enabled with the correct configuration
+                const currentStreamSpec = tableDescription.Table.StreamSpecification;
+                let streamArn = tableDescription.Table.LatestStreamArn;
+                
+                if (!currentStreamSpec || !currentStreamSpec.StreamEnabled || currentStreamSpec.StreamViewType !== 'NEW_AND_OLD_IMAGES') {
+                  // Enable or update DynamoDB Streams on the table
+                  const updateParams = {
+                    TableName: tableName,
+                    StreamSpecification: {
+                      StreamEnabled: true,
+                      StreamViewType: 'NEW_AND_OLD_IMAGES'
+                    }
+                  };
+                  
+                  console.log('Updating table with params:', JSON.stringify(updateParams, null, 2));
+                  
+                  const updateCommand = new UpdateTableCommand(updateParams);
+                  const result = await dynamodb.send(updateCommand);
+                  console.log('Update table result:', JSON.stringify(result, null, 2));
+                  
+                  streamArn = result.TableDescription.LatestStreamArn;
+                }
+                
+                // Return the stream ARN to CloudFormation
+                await sendResponse(event, context, 'SUCCESS', {
+                  StreamArn: streamArn
+                });
+              } else if (event.RequestType === 'Delete') {
+                // No action needed on delete, streams will remain enabled
+                await sendResponse(event, context, 'SUCCESS', {});
+              }
+            } catch (error) {
+              console.error('Error:', error);
+              await sendResponse(event, context, 'FAILED', { Error: error.message });
+            }
+          };
+
+  # IAM Role for EnableDynamoDBStreamFunction
+  EnableDynamoDBStreamFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: EnableDynamoDBStreamPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:DescribeTable'
+                  - 'dynamodb:UpdateTable'
+                Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${SubmissionsTableName}'
+  
+  # Custom Resource to enable DynamoDB Streams
+  EnableDynamoDBStream:
+    Type: Custom::EnableDynamoDBStream
+    Properties:
+      ServiceToken: !GetAtt EnableDynamoDBStreamFunction.Arn
+      TableName: !Ref SubmissionsTableName
+
+  # IAM Role for Lambda Functions
+  WebSocketLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: WebSocketLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:DeleteItem'
+                  - 'dynamodb:Query'
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:UpdateItem'
+                Resource: 
+                  - !GetAtt ConnectionsTable.Arn
+                  - !Sub "${ConnectionsTable.Arn}/index/*"
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:Query'
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:GetRecords'
+                  - 'dynamodb:GetShardIterator'
+                  - 'dynamodb:DescribeStream'
+                  - 'dynamodb:ListStreams'
+                Resource: 
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${SubmissionsTableName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${SubmissionsTableName}/stream/*"
+              - Effect: Allow
+                Action:
+                  - 'execute-api:ManageConnections'
+                Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/${Stage}/*"
+
+  # Lambda Functions
+  ConnectFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt WebSocketLambdaRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const ddb = new AWS.DynamoDB.DocumentClient();
+
+          exports.handler = async (event) => {
+            const connectionId = event.requestContext.connectionId;
+            
+            await ddb.put({
+              TableName: process.env.CONNECTIONS_TABLE,
+              Item: {
+                connectionId: connectionId,
+                timestamp: Date.now()
+              }
+            }).promise();
+            
+            return { statusCode: 200, body: 'Connected' };
+          };
+      Runtime: nodejs16.x
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref ConnectionsTable
+
+  DisconnectFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt WebSocketLambdaRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const ddb = new AWS.DynamoDB.DocumentClient();
+
+          exports.handler = async (event) => {
+            const connectionId = event.requestContext.connectionId;
+            
+            await ddb.delete({
+              TableName: process.env.CONNECTIONS_TABLE,
+              Key: {
+                connectionId: connectionId
+              }
+            }).promise();
+            
+            return { statusCode: 200, body: 'Disconnected' };
+          };
+      Runtime: nodejs16.x
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref ConnectionsTable
+
+  SubscribeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt WebSocketLambdaRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const ddb = new AWS.DynamoDB.DocumentClient();
+
+          exports.handler = async (event) => {
+            const connectionId = event.requestContext.connectionId;
+            const body = JSON.parse(event.body);
+            const submissionId = body.submissionId;
+            
+            if (!submissionId) {
+              return { statusCode: 400, body: 'Missing submissionId' };
+            }
+            
+            await ddb.update({
+              TableName: process.env.CONNECTIONS_TABLE,
+              Key: {
+                connectionId: connectionId
+              },
+              UpdateExpression: 'SET submissionId = :submissionId',
+              ExpressionAttributeValues: {
+                ':submissionId': submissionId
+              }
+            }).promise();
+            
+            return { statusCode: 200, body: 'Subscribed to submission updates' };
+          };
+      Runtime: nodejs16.x
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref ConnectionsTable
+
+  UnsubscribeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt WebSocketLambdaRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const ddb = new AWS.DynamoDB.DocumentClient();
+
+          exports.handler = async (event) => {
+            const connectionId = event.requestContext.connectionId;
+            
+            await ddb.update({
+              TableName: process.env.CONNECTIONS_TABLE,
+              Key: {
+                connectionId: connectionId
+              },
+              UpdateExpression: 'REMOVE submissionId'
+            }).promise();
+            
+            return { statusCode: 200, body: 'Unsubscribed from submission updates' };
+          };
+      Runtime: nodejs16.x
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref ConnectionsTable
+
+  SubmissionStreamProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt WebSocketLambdaRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const ddb = new AWS.DynamoDB.DocumentClient();
+          
+          exports.handler = async (event) => {
+            console.log('Processing DynamoDB Stream event:', JSON.stringify(event, null, 2));
+            
+            for (const record of event.Records) {
+              // Only process MODIFY events
+              if (record.eventName !== 'MODIFY') continue;
+              
+              const newImage = AWS.DynamoDB.Converter.unmarshall(record.dynamodb.NewImage);
+              const oldImage = AWS.DynamoDB.Converter.unmarshall(record.dynamodb.OldImage);
+              
+              // Check if status or findings changed
+              if (newImage.status === oldImage.status && 
+                  JSON.stringify(newImage.findings || {}) === JSON.stringify(oldImage.findings || {})) {
+                continue;
+              }
+              
+              const submissionId = newImage.submissionId;
+              console.log(`Processing update for submission ${submissionId}, status: ${newImage.status}`);
+              
+              // Find all connections subscribed to this submission
+              const connections = await ddb.query({
+                TableName: process.env.CONNECTIONS_TABLE,
+                IndexName: 'SubmissionIdIndex',
+                KeyConditionExpression: 'submissionId = :submissionId',
+                ExpressionAttributeValues: {
+                  ':submissionId': submissionId
+                }
+              }).promise();
+              
+              if (!connections.Items || connections.Items.length === 0) {
+                console.log(`No connections found for submission ${submissionId}`);
+                continue;
+              }
+              
+              console.log(`Found ${connections.Items.length} connections for submission ${submissionId}`);
+              
+              // Ensure the endpoint has the proper protocol
+              let endpoint = process.env.WEBSOCKET_API_ENDPOINT;
+              if (!endpoint.startsWith('https://')) {
+                endpoint = `https://${endpoint}`;
+              }
+              
+              const apiGateway = new AWS.ApiGatewayManagementApi({
+                endpoint: endpoint
+              });
+              
+              // Prepare update data - send the data directly as the submission object
+              // This matches what the frontend expects in the onUpdate callback
+              const updateData = {
+                action: 'submissionUpdate',
+                submissionId: submissionId,
+                data: {
+                  submissionId: submissionId,
+                  status: newImage.status,
+                  findings: newImage.findings,
+                  updatedAt: newImage.updatedAt
+                }
+              };
+              
+              // Send update to all connected clients
+              const postToConnection = async (connectionId) => {
+                try {
+                  await apiGateway.postToConnection({
+                    ConnectionId: connectionId,
+                    Data: JSON.stringify(updateData)
+                  }).promise();
+                  console.log(`Message sent to connection ${connectionId}`);
+                } catch (error) {
+                  if (error.statusCode === 410) {
+                    // Connection is stale, delete it
+                    console.log(`Deleting stale connection ${connectionId}`);
+                    await ddb.delete({
+                      TableName: process.env.CONNECTIONS_TABLE,
+                      Key: { connectionId }
+                    }).promise();
+                  } else {
+                    console.error(`Error sending message to connection ${connectionId}:`, error);
+                  }
+                }
+              };
+              
+              // Send updates to all connections
+              await Promise.all(connections.Items.map(connection => 
+                postToConnection(connection.connectionId)
+              ));
+            }
+            
+            return { statusCode: 200, body: 'Processed' };
+          };
+      Runtime: nodejs16.x
+      Timeout: 30
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref ConnectionsTable
+          WEBSOCKET_API_ENDPOINT: !Sub "${WebSocketAPI}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+
+  # Event Source Mapping for DynamoDB Stream
+  SubmissionStreamEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 100
+      Enabled: true
+      EventSourceArn: !GetAtt EnableDynamoDBStream.StreamArn
+      FunctionName: !GetAtt SubmissionStreamProcessorFunction.Arn
+      StartingPosition: LATEST
+    DependsOn: EnableDynamoDBStream
+
+  # API Gateway Routes
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: $connect
+      AuthorizationType: NONE
+      OperationName: ConnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref ConnectIntegration
+
+  ConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConnectFunction.Arn}/invocations
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: DisconnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref DisconnectIntegration
+
+  DisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DisconnectFunction.Arn}/invocations
+
+  SubscribeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: subscribe
+      AuthorizationType: NONE
+      OperationName: SubscribeRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref SubscribeIntegration
+
+  SubscribeIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SubscribeFunction.Arn}/invocations
+
+  UnsubscribeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: unsubscribe
+      AuthorizationType: NONE
+      OperationName: UnsubscribeRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref UnsubscribeIntegration
+
+  UnsubscribeIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UnsubscribeFunction.Arn}/invocations
+
+  # Lambda Permissions
+  ConnectFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ConnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/$connect
+
+  DisconnectFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref DisconnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/$disconnect
+
+  SubscribeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SubscribeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/subscribe
+
+  UnsubscribeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref UnsubscribeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/unsubscribe
+
+Outputs:
+  WebSocketAPIEndpoint:
+    Description: "WebSocket API Endpoint"
+    Value: !Sub wss://${WebSocketAPI}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
+  WebSocketAPIId:
+    Description: "WebSocket API ID"
+    Value: !Ref WebSocketAPI
+  ConnectionsTableName:
+    Description: "DynamoDB Connections Table Name"
+    Value: !Ref ConnectionsTable

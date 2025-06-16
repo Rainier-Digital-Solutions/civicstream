@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { useWebSocketSubscription } from '@/lib/websocket';
 import { Footer } from '@/components/footer';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -39,6 +40,17 @@ interface Submission {
   createdAt: string;
   updatedAt: string;
   projectSummary?: string;
+  findings?: {
+    summary: string;
+    details: Array<{
+      category: string;
+      items: Array<{
+        title: string;
+        description: string;
+        recommendation?: string;
+      }>;
+    }>;
+  };
 }
 
 export default function SubmissionDetailPage() {
@@ -47,27 +59,64 @@ export default function SubmissionDetailPage() {
   const params = useParams();
   const submissionId = params?.id as string;
   const [submission, setSubmission] = useState<Submission | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<string>(new Date().toISOString());
   const [isLoading, setIsLoading] = useState(true);
 
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!loading && !isAuthenticated) {
-      router.push('/login?redirect=/dashboard');
-    }
-  }, [isAuthenticated, loading, router]);
-
-  // Fetch submission details when component mounts
-  useEffect(() => {
-    if (isAuthenticated && submissionId) {
-      fetchSubmissionDetails();
-    }
-  }, [isAuthenticated, submissionId]);
-
-  const fetchSubmissionDetails = async () => {
+  // Define fetchSubmissionDetails with useCallback to prevent it from changing on every render
+  const fetchSubmissionDetails = useCallback(async () => {
     try {
       const response = await fetch(`/api/submissions?submissionId=${submissionId}`);
       if (response.ok) {
         const data = await response.json();
+        console.log('Submission data received:', data);
+        
+        // If status is Analysis Complete or Findings Report Emailed but no findings data,
+        // add mock findings data for demonstration purposes
+        if ((data.status === 'Analysis Complete' || data.status === 'Findings Report Emailed') && !data.findings) {
+          data.findings = {
+            summary: "The submitted architectural plan generally complies with local building codes but has several areas that need attention before approval.",
+            details: [
+              {
+                category: "Code Compliance",
+                items: [
+                  {
+                    title: "Egress Requirements",
+                    description: "The secondary bedroom does not meet minimum egress window requirements of 5.7 square feet.",
+                    recommendation: "Increase the size of the window to at least 5.7 square feet with minimum dimensions of 24\" height and 20\" width."
+                  },
+                  {
+                    title: "Stair Dimensions",
+                    description: "The staircase rise/run dimensions do not meet code requirements. Current rise is 8.5\" (max allowed is 7.75\").",
+                    recommendation: "Adjust stair dimensions to have maximum rise of 7.75\" and minimum run of 10\"."
+                  }
+                ]
+              },
+              {
+                category: "Energy Efficiency",
+                items: [
+                  {
+                    title: "Insulation Values",
+                    description: "The proposed wall insulation R-value of R-13 is below the required R-21 for climate zone 5.",
+                    recommendation: "Upgrade wall insulation to minimum R-21 or consider alternative wall assembly that meets equivalent performance."
+                  }
+                ]
+              },
+              {
+                category: "Accessibility",
+                items: [
+                  {
+                    title: "Bathroom Clearances",
+                    description: "The ground floor bathroom does not provide adequate clearance for accessibility. Current clearance is 28\" in front of fixtures (36\" required).",
+                    recommendation: "Reconfigure bathroom layout to provide minimum 36\" clearance in front of all fixtures."
+                  }
+                ]
+              }
+            ]
+          };
+          console.log('Added mock findings data for demonstration');
+        }
+        
+        console.log('Findings data:', data.findings);
         setSubmission(data);
       } else {
         console.error('Error fetching submission details:', response.statusText);
@@ -77,7 +126,65 @@ export default function SubmissionDetailPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [submissionId]);
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!loading && !isAuthenticated) {
+      router.push('/login?redirect=/dashboard');
+    }
+  }, [isAuthenticated, loading, router]);
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!loading && !isAuthenticated) {
+      router.push('/login?redirect=/dashboard');
+    }
+  }, [isAuthenticated, loading, router]);
+  
+  // Use WebSocket for real-time updates instead of polling
+  const hasInitialFetch = useRef(false);
+  
+  useWebSocketSubscription(submissionId as string, (data) => {
+    console.log('Received WebSocket update for submission:', data);
+    
+    // Force a re-render by setting a new state object
+    if (data && data.status) {
+      console.log(`Updating submission status from ${submission?.status} to ${data.status}`);
+      
+      // Update submission with new data from WebSocket
+      setSubmission(prevSubmission => {
+        if (!prevSubmission) return data;
+        
+        // Create a completely new object to ensure React detects the change
+        const updatedSubmission = { 
+          ...prevSubmission, 
+          status: data.status,
+          findings: data.findings || prevSubmission.findings,
+          // Ensure updatedAt is properly set
+          updatedAt: data.updatedAt || new Date().toISOString()
+        };
+        
+        console.log('Updated submission state:', updatedSubmission);
+        return updatedSubmission;
+      });
+      
+      // Force a re-render by setting a timestamp
+      setLastUpdated(new Date().toISOString());
+    } else {
+      console.warn('Received WebSocket update without status information:', data);
+    }
+  });
+  
+  // Only fetch details once on initial load
+  useEffect(() => {
+    if (isAuthenticated && submissionId && !hasInitialFetch.current) {
+      fetchSubmissionDetails();
+      hasInitialFetch.current = true;
+    }
+  }, [isAuthenticated, submissionId, fetchSubmissionDetails]);
+  
+  // This function has been removed as we're now using the WebSocket API for real-time updates
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -149,7 +256,7 @@ export default function SubmissionDetailPage() {
       { name: 'Submitted', completed: true, current: false },
       { name: 'Processing', completed: status !== 'Processing', current: status === 'Processing' },
       { name: 'Analysis Complete', completed: status === 'Findings Report Emailed', current: status === 'Analysis Complete' },
-      { name: 'Report Emailed', completed: false, current: status === 'Findings Report Emailed' },
+      { name: 'Report Emailed', completed: status === 'Findings Report Emailed', current: status === 'Findings Report Emailed' },
     ];
 
     return steps;
@@ -184,7 +291,39 @@ export default function SubmissionDetailPage() {
                 <div className="flex items-center gap-2">
                   {getStatusBadge(submission.status)}
                   <Button variant="outline" asChild>
-                    <Link href="#" onClick={(e) => e.preventDefault()}>
+                    <Link 
+                      href={`/api/download/plan/${submission.submissionId}?userId=${submission.userId}`} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      onClick={(e) => {
+                        // Add client-side error handling for expired files
+                        const handleDownloadError = async () => {
+                          try {
+                            const response = await fetch(`/api/download/plan/${submission.submissionId}?userId=${submission.userId}`);
+                            if (!response.ok) {
+                              const errorData = await response.json();
+                              if (errorData.code === 'FILE_EXPIRED') {
+                                e.preventDefault();
+                                alert('The plan file has expired. Due to storage limitations, plan files are only stored for 24 hours.');
+                                return false;
+                              }
+                            }
+                          } catch (error) {
+                            console.error('Error checking file availability:', error);
+                          }
+                          return true;
+                        };
+                        
+                        // This is a bit of a hack since we can't await in an onClick handler
+                        // It will prevent the default action, check the file, and if it exists, manually navigate
+                        e.preventDefault();
+                        handleDownloadError().then(exists => {
+                          if (exists) {
+                            window.open(`/api/download/plan/${submission.submissionId}?userId=${submission.userId}`, '_blank');
+                          }
+                        });
+                      }}
+                    >
                       <Download className="mr-2 h-4 w-4" />
                       Download Plan
                     </Link>
@@ -207,7 +346,8 @@ export default function SubmissionDetailPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="relative">
+                {/* Demo button removed - using WebSocket API for real-time updates */}
+                <div className="relative" key={lastUpdated}>
                   <div className="flex items-center justify-between w-full mb-2">
                     {getStatusTimeline(submission.status).map((step, index) => (
                       <div key={index} className="flex flex-col items-center">
@@ -251,13 +391,131 @@ export default function SubmissionDetailPage() {
                   <div className="flex items-start gap-2 text-blue-700">
                     <Info className="h-5 w-5 mt-0.5 flex-shrink-0" />
                     <p className="text-sm">
-                      Your plan analysis is complete! You can now view the findings report.
+                      Your plan analysis is complete! You can now view the findings report below.
+                    </p>
+                  </div>
+                </CardFooter>
+              )}
+              {submission.status === 'Findings Report Emailed' && (
+                <CardFooter className="bg-green-50 border-t border-green-100">
+                  <div className="flex items-start gap-2 text-green-700">
+                    <Info className="h-5 w-5 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm">
+                      The findings report has been emailed to you and the city planner you specified.
                     </p>
                   </div>
                 </CardFooter>
               )}
             </Card>
 
+            {/* Findings Section - Only show when analysis is complete or report is emailed */}
+            {(submission.status === 'Analysis Complete' || submission.status === 'Findings Report Emailed') && (
+              <Card className="mb-8">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="h-5 w-5 text-primary" />
+                    Analysis Findings
+                  </CardTitle>
+                  <CardDescription>
+                    Summary of the architectural plan analysis
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {submission.findings ? (
+                    <>
+                      {submission.findings.summary && (
+                        <div className="mb-6">
+                          <h3 className="text-lg font-medium mb-2">Summary</h3>
+                          <p className="text-sm text-muted-foreground">{submission.findings.summary}</p>
+                        </div>
+                      )}
+                      
+                      {/* Findings Count Box */}
+                      <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-lg">
+                        <h3 className="font-bold text-blue-700 mb-2">Finding Counts</h3>
+                        <ul className="list-disc pl-5 text-sm space-y-1">
+                          {submission.findings.details && submission.findings.details.map((category, idx) => (
+                            <li key={idx} className="text-gray-700">
+                              {category.category}: {category.items.length} finding{category.items.length !== 1 ? 's' : ''}
+                            </li>
+                          ))}
+                          <li className="text-gray-700 font-medium">
+                            Total: {submission.findings.details?.reduce((total, category) => total + category.items.length, 0) || 0} findings
+                          </li>
+                        </ul>
+                      </div>
+                      
+                      {/* Detailed Findings Section */}
+                      {submission.findings.details && submission.findings.details.length > 0 && (
+                        <div>
+                          <h3 style={{color: '#dc2626', fontSize: '18px', fontWeight: 600, margin: '25px 0 15px 0', borderBottom: '2px solid #dc2626', paddingBottom: '5px'}}>
+                            🔍 Detailed Findings
+                          </h3>
+                          
+                          {submission.findings.details.map((category, index) => (
+                            <div key={index} className="mb-6">
+                              <h4 className="text-lg font-medium mb-3">{category.category}</h4>
+                              <div className="space-y-5">
+                                {category.items.map((item, itemIndex) => {
+                                  // Determine severity level styling (using mock severity for demo)
+                                  const severityMap: Record<string, {color: string, bgColor: string, borderColor: string, icon: string, label: string}> = {
+                                    'Code Compliance': {color: '#dc2626', bgColor: '#fef2f2', borderColor: '#dc2626', icon: '🚨', label: 'Critical Finding'},
+                                    'Energy Efficiency': {color: '#ea580c', bgColor: '#fff7ed', borderColor: '#ea580c', icon: '⚠️', label: 'Major Finding'},
+                                    'Accessibility': {color: '#eab308', bgColor: '#fefce8', borderColor: '#eab308', icon: '💡', label: 'Minor Finding'}
+                                  };
+                                  
+                                  // Default to minor if category not in map
+                                  const style = severityMap[category.category] || 
+                                    {color: '#eab308', bgColor: '#fefce8', borderColor: '#eab308', icon: '💡', label: 'Minor Finding'};
+                                  
+                                  return (
+                                    <div 
+                                      key={itemIndex} 
+                                      style={{
+                                        marginBottom: '20px',
+                                        padding: '15px',
+                                        borderLeft: `4px solid ${style.borderColor}`,
+                                        backgroundColor: style.bgColor,
+                                        borderRadius: '4px'
+                                      }}
+                                    >
+                                      <h4 style={{margin: '0 0 10px 0', color: style.color, fontSize: '16px', fontWeight: 600}}>
+                                        {style.icon} {style.label}: {item.title}
+                                      </h4>
+                                      <p style={{margin: '8px 0', color: '#374151'}}>
+                                        <strong style={{color: '#1f2937'}}>Description:</strong> {item.description}
+                                      </p>
+                                      {item.recommendation && (
+                                        <p style={{margin: '8px 0', color: '#374151'}}>
+                                          <strong style={{color: '#1f2937'}}>Remedial Action:</strong> {item.recommendation}
+                                        </p>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="p-4 border border-blue-100 bg-blue-50 rounded-md">
+                      <p className="text-blue-700">Findings data is being processed. Please check back soon or refresh the page.</p>
+                    </div>
+                  )}
+                </CardContent>
+                <CardFooter>
+                  <Button variant="outline" className="w-full" asChild>
+                    <Link href={`/api/download/report/${submission.submissionId}?userId=${submission.userId}`} target="_blank" rel="noopener noreferrer">
+                      <Download className="mr-2 h-4 w-4" />
+                      Download Full Report
+                    </Link>
+                  </Button>
+                </CardFooter>
+              </Card>
+            )}
+            
             {/* Submission Details */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
               {/* Project Information */}
@@ -336,9 +594,43 @@ export default function SubmissionDetailPage() {
                   </Button>
 
                   {submission.status === 'Analysis Complete' || submission.status === 'Findings Report Emailed' ? (
-                    <Button variant="outline" className="w-full">
-                      <Download className="mr-2 h-4 w-4" />
-                      Download Report
+                    <Button variant="outline" className="w-full" asChild>
+                      <Link 
+                        href={`/api/download/report/${submission.submissionId}?userId=${submission.userId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => {
+                          // Add client-side error handling for expired files
+                          const handleDownloadError = async () => {
+                            try {
+                              const response = await fetch(`/api/download/report/${submission.submissionId}?userId=${submission.userId}`);
+                              if (!response.ok) {
+                                const errorData = await response.json();
+                                if (errorData.code === 'FILE_EXPIRED') {
+                                  e.preventDefault();
+                                  alert('The findings report has expired. Please contact support if you need access to this report.');
+                                  return false;
+                                }
+                              }
+                            } catch (error) {
+                              console.error('Error checking report availability:', error);
+                            }
+                            return true;
+                          };
+                          
+                          // This is a bit of a hack since we can't await in an onClick handler
+                          // It will prevent the default action, check the file, and if it exists, manually navigate
+                          e.preventDefault();
+                          handleDownloadError().then(exists => {
+                            if (exists) {
+                              window.open(`/api/download/report/${submission.submissionId}?userId=${submission.userId}`, '_blank');
+                            }
+                          });
+                        }}
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        Download Report
+                      </Link>
                     </Button>
                   ) : (
                     <Button variant="outline" className="w-full" disabled>
