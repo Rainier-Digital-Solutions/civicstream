@@ -10,14 +10,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
-import { 
-  AlertCircle, 
-  ArrowLeft, 
-  CheckCircle, 
-  Clock, 
-  Download, 
-  FileText, 
-  Loader2, 
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle,
+  Clock,
+  Download,
+  FileText,
+  Loader2,
   Mail,
   MapPin,
   Calendar,
@@ -27,7 +27,16 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
+interface FindingItem {
+  description: string;
+  codeSection: string;
+  remedialAction: string;
+  confidenceScore: number;
+  severity: "critical" | "major" | "minor";
+}
+
 interface Submission {
+  // Keep existing properties
   submissionId: string;
   userId: string;
   fileName: string;
@@ -40,16 +49,21 @@ interface Submission {
   createdAt: string;
   updatedAt: string;
   projectSummary?: string;
+
+  // Update findings to match Claude's response format
   findings?: {
     summary: string;
-    details: Array<{
-      category: string;
-      items: Array<{
-        title: string;
-        description: string;
-        recommendation?: string;
-      }>;
-    }>;
+    missingPlans: FindingItem[];
+    missingPermits: FindingItem[];
+    missingDocumentation: FindingItem[];
+    missingInspectionCertificates: FindingItem[];
+    criticalFindings: FindingItem[];
+    majorFindings: FindingItem[];
+    minorFindings: FindingItem[];
+    totalFindings: number;
+    isCompliant: boolean;
+    cityPlannerEmailBody: string;
+    submitterEmailBody: string;
   };
 }
 
@@ -69,7 +83,7 @@ export default function SubmissionDetailPage() {
       if (response.ok) {
         const data = await response.json();
         console.log('Submission data received:', data);
-        
+
         // If status is Analysis Complete or Findings Report Emailed but no findings data,
         // add mock findings data for demonstration purposes
         if ((data.status === 'Analysis Complete' || data.status === 'Findings Report Emailed') && !data.findings) {
@@ -115,7 +129,7 @@ export default function SubmissionDetailPage() {
           };
           console.log('Added mock findings data for demonstration');
         }
-        
+
         console.log('Findings data:', data.findings);
         setSubmission(data);
       } else {
@@ -141,41 +155,41 @@ export default function SubmissionDetailPage() {
       router.push('/login?redirect=/dashboard');
     }
   }, [isAuthenticated, loading, router]);
-  
+
   // Use WebSocket for real-time updates instead of polling
   const hasInitialFetch = useRef(false);
-  
+
   useWebSocketSubscription(submissionId as string, (data) => {
     console.log('Received WebSocket update for submission:', data);
-    
+
     // Force a re-render by setting a new state object
     if (data && data.status) {
       console.log(`Updating submission status from ${submission?.status} to ${data.status}`);
-      
+
       // Update submission with new data from WebSocket
       setSubmission(prevSubmission => {
         if (!prevSubmission) return data;
-        
+
         // Create a completely new object to ensure React detects the change
-        const updatedSubmission = { 
-          ...prevSubmission, 
+        const updatedSubmission = {
+          ...prevSubmission,
           status: data.status,
           findings: data.findings || prevSubmission.findings,
           // Ensure updatedAt is properly set
           updatedAt: data.updatedAt || new Date().toISOString()
         };
-        
+
         console.log('Updated submission state:', updatedSubmission);
         return updatedSubmission;
       });
-      
+
       // Force a re-render by setting a timestamp
       setLastUpdated(new Date().toISOString());
     } else {
       console.warn('Received WebSocket update without status information:', data);
     }
   });
-  
+
   // Only fetch details once on initial load
   useEffect(() => {
     if (isAuthenticated && submissionId && !hasInitialFetch.current) {
@@ -183,7 +197,7 @@ export default function SubmissionDetailPage() {
       hasInitialFetch.current = true;
     }
   }, [isAuthenticated, submissionId, fetchSubmissionDetails]);
-  
+
   // This function has been removed as we're now using the WebSocket API for real-time updates
 
   const getStatusBadge = (status: string) => {
@@ -291,9 +305,9 @@ export default function SubmissionDetailPage() {
                 <div className="flex items-center gap-2">
                   {getStatusBadge(submission.status)}
                   <Button variant="outline" asChild>
-                    <Link 
-                      href={`/api/download/plan/${submission.submissionId}?userId=${submission.userId}`} 
-                      target="_blank" 
+                    <Link
+                      href={`/api/download/plan/${submission.submissionId}?userId=${submission.userId}`}
+                      target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => {
                         // Add client-side error handling for expired files
@@ -313,7 +327,7 @@ export default function SubmissionDetailPage() {
                           }
                           return true;
                         };
-                        
+
                         // This is a bit of a hack since we can't await in an onClick handler
                         // It will prevent the default action, check the file, and if it exists, manually navigate
                         e.preventDefault();
@@ -351,18 +365,16 @@ export default function SubmissionDetailPage() {
                   <div className="flex items-center justify-between w-full mb-2">
                     {getStatusTimeline(submission.status).map((step, index) => (
                       <div key={index} className="flex flex-col items-center">
-                        <div className={`rounded-full h-8 w-8 flex items-center justify-center border-2 ${
-                          step.completed 
-                            ? 'bg-primary border-primary text-primary-foreground' 
-                            : step.current 
-                              ? 'bg-primary/20 border-primary text-primary' 
+                        <div className={`rounded-full h-8 w-8 flex items-center justify-center border-2 ${step.completed
+                            ? 'bg-primary border-primary text-primary-foreground'
+                            : step.current
+                              ? 'bg-primary/20 border-primary text-primary'
                               : 'bg-muted border-muted-foreground/20 text-muted-foreground'
-                        }`}>
+                          }`}>
                           {index + 1}
                         </div>
-                        <span className={`text-xs mt-1 ${
-                          step.completed || step.current ? 'font-medium' : 'text-muted-foreground'
-                        }`}>
+                        <span className={`text-xs mt-1 ${step.completed || step.current ? 'font-medium' : 'text-muted-foreground'
+                          }`}>
                           {step.name}
                         </span>
                       </div>
@@ -380,7 +392,7 @@ export default function SubmissionDetailPage() {
                   <div className="flex items-start gap-2 text-amber-700">
                     <Info className="h-5 w-5 mt-0.5 flex-shrink-0" />
                     <p className="text-sm">
-                      Processing typically takes 5-10 minutes. You don&apos;t need to stay on this page - 
+                      Processing typically takes 5-10 minutes. You don&apos;t need to stay on this page -
                       we&apos;ll email you when the analysis is complete.
                     </p>
                   </div>
@@ -429,75 +441,306 @@ export default function SubmissionDetailPage() {
                           <p className="text-sm text-muted-foreground">{submission.findings.summary}</p>
                         </div>
                       )}
-                      
+
                       {/* Findings Count Box */}
                       <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-lg">
                         <h3 className="font-bold text-blue-700 mb-2">Finding Counts</h3>
                         <ul className="list-disc pl-5 text-sm space-y-1">
-                          {submission.findings.details && submission.findings.details.map((category, idx) => (
-                            <li key={idx} className="text-gray-700">
-                              {category.category}: {category.items.length} finding{category.items.length !== 1 ? 's' : ''}
-                            </li>
-                          ))}
+                          <li className="text-gray-700">
+                            Critical Findings: {submission.findings.criticalFindings?.length || 0}
+                          </li>
+                          <li className="text-gray-700">
+                            Major Findings: {submission.findings.majorFindings?.length || 0}
+                          </li>
+                          <li className="text-gray-700">
+                            Minor Findings: {submission.findings.minorFindings?.length || 0}
+                          </li>
                           <li className="text-gray-700 font-medium">
-                            Total: {submission.findings.details?.reduce((total, category) => total + category.items.length, 0) || 0} findings
+                            Total: {submission.findings.totalFindings || 0} findings
+                          </li>
+                        </ul>
+                        <ul className="list-disc pl-5 text-sm space-y-1 mt-3">
+                          <li className="text-gray-700">
+                            Missing Plans: {submission.findings.missingPlans?.length || 0}
+                          </li>
+                          <li className="text-gray-700">
+                            Missing Permits: {submission.findings.missingPermits?.length || 0}
+                          </li>
+                          <li className="text-gray-700">
+                            Missing Documentation: {submission.findings.missingDocumentation?.length || 0}
+                          </li>
+                          <li className="text-gray-700">
+                            Missing Inspections: {submission.findings.missingInspectionCertificates?.length || 0}
                           </li>
                         </ul>
                       </div>
-                      
+
                       {/* Detailed Findings Section */}
-                      {submission.findings.details && submission.findings.details.length > 0 && (
-                        <div>
-                          <h3 style={{color: '#dc2626', fontSize: '18px', fontWeight: 600, margin: '25px 0 15px 0', borderBottom: '2px solid #dc2626', paddingBottom: '5px'}}>
-                            🔍 Detailed Findings
-                          </h3>
-                          
-                          {submission.findings.details.map((category, index) => (
-                            <div key={index} className="mb-6">
-                              <h4 className="text-lg font-medium mb-3">{category.category}</h4>
-                              <div className="space-y-5">
-                                {category.items.map((item, itemIndex) => {
-                                  // Determine severity level styling (using mock severity for demo)
-                                  const severityMap: Record<string, {color: string, bgColor: string, borderColor: string, icon: string, label: string}> = {
-                                    'Code Compliance': {color: '#dc2626', bgColor: '#fef2f2', borderColor: '#dc2626', icon: '🚨', label: 'Critical Finding'},
-                                    'Energy Efficiency': {color: '#ea580c', bgColor: '#fff7ed', borderColor: '#ea580c', icon: '⚠️', label: 'Major Finding'},
-                                    'Accessibility': {color: '#eab308', bgColor: '#fefce8', borderColor: '#eab308', icon: '💡', label: 'Minor Finding'}
-                                  };
-                                  
-                                  // Default to minor if category not in map
-                                  const style = severityMap[category.category] || 
-                                    {color: '#eab308', bgColor: '#fefce8', borderColor: '#eab308', icon: '💡', label: 'Minor Finding'};
-                                  
-                                  return (
-                                    <div 
-                                      key={itemIndex} 
-                                      style={{
-                                        marginBottom: '20px',
-                                        padding: '15px',
-                                        borderLeft: `4px solid ${style.borderColor}`,
-                                        backgroundColor: style.bgColor,
-                                        borderRadius: '4px'
-                                      }}
-                                    >
-                                      <h4 style={{margin: '0 0 10px 0', color: style.color, fontSize: '16px', fontWeight: 600}}>
-                                        {style.icon} {style.label}: {item.title}
-                                      </h4>
-                                      <p style={{margin: '8px 0', color: '#374151'}}>
-                                        <strong style={{color: '#1f2937'}}>Description:</strong> {item.description}
-                                      </p>
-                                      {item.recommendation && (
-                                        <p style={{margin: '8px 0', color: '#374151'}}>
-                                          <strong style={{color: '#1f2937'}}>Remedial Action:</strong> {item.recommendation}
-                                        </p>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
+                      <div>
+                        <h3 style={{ color: '#dc2626', fontSize: '18px', fontWeight: 600, margin: '25px 0 15px 0', borderBottom: '2px solid #dc2626', paddingBottom: '5px' }}>
+                          🔍 Detailed Findings
+                        </h3>
+
+                        {/* Critical Findings */}
+                        {submission.findings.criticalFindings && submission.findings.criticalFindings.length > 0 && (
+                          <div className="mb-6">
+                            <h4 className="text-lg font-medium mb-3">Critical Findings</h4>
+                            <div className="space-y-5">
+                              {submission.findings.criticalFindings.map((item, index) => (
+                                <div
+                                  key={index}
+                                  style={{
+                                    marginBottom: '20px',
+                                    padding: '15px',
+                                    borderLeft: '4px solid #dc2626',
+                                    backgroundColor: '#fef2f2',
+                                    borderRadius: '4px'
+                                  }}
+                                >
+                                  <h4 style={{ margin: '0 0 10px 0', color: '#dc2626', fontSize: '16px', fontWeight: 600 }}>
+                                    🚨 Critical Finding: {item.description.split(':')[0] || 'Issue'}
+                                  </h4>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Description:</strong> {item.description}
+                                  </p>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Code Section:</strong> {item.codeSection}
+                                  </p>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Remedial Action:</strong> {item.remedialAction}
+                                  </p>
+                                  <p style={{ margin: '8px 0 0 0', color: '#6b7280', fontSize: '14px' }}>
+                                    <strong>Confidence:</strong> {Math.round(item.confidenceScore * 100)}%
+                                  </p>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
-                      )}
+                          </div>
+                        )}
+
+                        {/* Major Findings */}
+                        {submission.findings.majorFindings && submission.findings.majorFindings.length > 0 && (
+                          <div className="mb-6">
+                            <h4 className="text-lg font-medium mb-3">Major Findings</h4>
+                            <div className="space-y-5">
+                              {submission.findings.majorFindings.map((item, index) => (
+                                <div
+                                  key={index}
+                                  style={{
+                                    marginBottom: '20px',
+                                    padding: '15px',
+                                    borderLeft: '4px solid #ea580c',
+                                    backgroundColor: '#fff7ed',
+                                    borderRadius: '4px'
+                                  }}
+                                >
+                                  <h4 style={{ margin: '0 0 10px 0', color: '#ea580c', fontSize: '16px', fontWeight: 600 }}>
+                                    ⚠️ Major Finding: {item.description.split(':')[0] || 'Issue'}
+                                  </h4>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Description:</strong> {item.description}
+                                  </p>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Code Section:</strong> {item.codeSection}
+                                  </p>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Remedial Action:</strong> {item.remedialAction}
+                                  </p>
+                                  <p style={{ margin: '8px 0 0 0', color: '#6b7280', fontSize: '14px' }}>
+                                    <strong>Confidence:</strong> {Math.round(item.confidenceScore * 100)}%
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Minor Findings */}
+                        {submission.findings.minorFindings && submission.findings.minorFindings.length > 0 && (
+                          <div className="mb-6">
+                            <h4 className="text-lg font-medium mb-3">Minor Findings</h4>
+                            <div className="space-y-5">
+                              {submission.findings.minorFindings.map((item, index) => (
+                                <div
+                                  key={index}
+                                  style={{
+                                    marginBottom: '20px',
+                                    padding: '15px',
+                                    borderLeft: '4px solid #eab308',
+                                    backgroundColor: '#fefce8',
+                                    borderRadius: '4px'
+                                  }}
+                                >
+                                  <h4 style={{ margin: '0 0 10px 0', color: '#eab308', fontSize: '16px', fontWeight: 600 }}>
+                                    💡 Minor Finding: {item.description.split(':')[0] || 'Issue'}
+                                  </h4>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Description:</strong> {item.description}
+                                  </p>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Code Section:</strong> {item.codeSection}
+                                  </p>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Remedial Action:</strong> {item.remedialAction}
+                                  </p>
+                                  <p style={{ margin: '8px 0 0 0', color: '#6b7280', fontSize: '14px' }}>
+                                    <strong>Confidence:</strong> {Math.round(item.confidenceScore * 100)}%
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Missing Plans */}
+                        {submission.findings.missingPlans && submission.findings.missingPlans.length > 0 && (
+                          <div className="mb-6">
+                            <h3 style={{ color: '#f59e0b', fontSize: '18px', fontWeight: 600, margin: '25px 0 15px 0', borderBottom: '2px solid #f59e0b', paddingBottom: '5px' }}>
+                              📋 Missing Items
+                            </h3>
+                            <h4 className="text-lg font-medium mb-3">Missing Plans</h4>
+                            <div className="space-y-5">
+                              {submission.findings.missingPlans.map((item, index) => (
+                                <div
+                                  key={index}
+                                  style={{
+                                    marginBottom: '20px',
+                                    padding: '15px',
+                                    borderLeft: '4px solid #3b82f6',
+                                    backgroundColor: '#eff6ff',
+                                    borderRadius: '4px'
+                                  }}
+                                >
+                                  <h4 style={{ margin: '0 0 10px 0', color: '#3b82f6', fontSize: '16px', fontWeight: 600 }}>
+                                    📐 Missing Plan: {item.description.split(':')[0] || 'Plan'}
+                                  </h4>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Description:</strong> {item.description}
+                                  </p>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Code Requirement:</strong> {item.codeSection}
+                                  </p>
+                                  <p style={{ margin: '8px 0 0 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Action Required:</strong> {item.remedialAction}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Missing Permits */}
+                        {submission.findings.missingPermits && submission.findings.missingPermits.length > 0 && (
+                          <div className="mb-6">
+                            <h4 className="text-lg font-medium mb-3">Missing Permits</h4>
+                            <div className="space-y-5">
+                              {submission.findings.missingPermits.map((item, index) => (
+                                <div
+                                  key={index}
+                                  style={{
+                                    marginBottom: '20px',
+                                    padding: '15px',
+                                    borderLeft: '4px solid #8b5cf6',
+                                    backgroundColor: '#f5f3ff',
+                                    borderRadius: '4px'
+                                  }}
+                                >
+                                  <h4 style={{ margin: '0 0 10px 0', color: '#8b5cf6', fontSize: '16px', fontWeight: 600 }}>
+                                    📄 Missing Permit: {item.description.split(':')[0] || 'Permit'}
+                                  </h4>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Description:</strong> {item.description}
+                                  </p>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Code Requirement:</strong> {item.codeSection}
+                                  </p>
+                                  <p style={{ margin: '8px 0 0 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Action Required:</strong> {item.remedialAction}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Missing Documentation */}
+                        {submission.findings.missingDocumentation && submission.findings.missingDocumentation.length > 0 && (
+                          <div className="mb-6">
+                            <h4 className="text-lg font-medium mb-3">Missing Documentation</h4>
+                            <div className="space-y-5">
+                              {submission.findings.missingDocumentation.map((item, index) => (
+                                <div
+                                  key={index}
+                                  style={{
+                                    marginBottom: '20px',
+                                    padding: '15px',
+                                    borderLeft: '4px solid #10b981',
+                                    backgroundColor: '#ecfdf5',
+                                    borderRadius: '4px'
+                                  }}
+                                >
+                                  <h4 style={{ margin: '0 0 10px 0', color: '#10b981', fontSize: '16px', fontWeight: 600 }}>
+                                    📋 Missing Documentation: {item.description.split(':')[0] || 'Documentation'}
+                                  </h4>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Description:</strong> {item.description}
+                                  </p>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Code Requirement:</strong> {item.codeSection}
+                                  </p>
+                                  <p style={{ margin: '8px 0 0 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Action Required:</strong> {item.remedialAction}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Missing Inspection Certificates */}
+                        {submission.findings.missingInspectionCertificates && submission.findings.missingInspectionCertificates.length > 0 && (
+                          <div className="mb-6">
+                            <h4 className="text-lg font-medium mb-3">Missing Inspections</h4>
+                            <div className="space-y-5">
+                              {submission.findings.missingInspectionCertificates.map((item, index) => (
+                                <div
+                                  key={index}
+                                  style={{
+                                    marginBottom: '20px',
+                                    padding: '15px',
+                                    borderLeft: '4px solid #14b8a6',
+                                    backgroundColor: '#f0fdfa',
+                                    borderRadius: '4px'
+                                  }}
+                                >
+                                  <h4 style={{ margin: '0 0 10px 0', color: '#14b8a6', fontSize: '16px', fontWeight: 600 }}>
+                                    ✅ Missing Inspection: {item.description.split(':')[0] || 'Inspection'}
+                                  </h4>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Description:</strong> {item.description}
+                                  </p>
+                                  <p style={{ margin: '8px 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Code Requirement:</strong> {item.codeSection}
+                                  </p>
+                                  <p style={{ margin: '8px 0 0 0', color: '#374151' }}>
+                                    <strong style={{ color: '#1f2937' }}>Action Required:</strong> {item.remedialAction}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Next Steps Section */}
+                        <h3 style={{ color: '#3b82f6', fontSize: '18px', fontWeight: 600, margin: '25px 0 15px 0' }}>
+                          🚀 Next Steps
+                        </h3>
+                        <ol style={{ margin: '15px 0', paddingLeft: '20px', color: '#374151', lineHeight: '1.6' }}>
+                          <li>Review all findings in detail above</li>
+                          <li>Make the necessary corrections to your plans and gather all missing documentation</li>
+                          <li>Resubmit your corrected plans through our system</li>
+                        </ol>
+                      </div>
                     </>
                   ) : (
                     <div className="p-4 border border-blue-100 bg-blue-50 rounded-md">
@@ -515,7 +758,7 @@ export default function SubmissionDetailPage() {
                 </CardFooter>
               </Card>
             )}
-            
+
             {/* Submission Details */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
               {/* Project Information */}
@@ -540,7 +783,7 @@ export default function SubmissionDetailPage() {
                       <p>{submission.city}, {submission.county}</p>
                     </div>
                   </div>
-                  
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <p className="text-sm font-medium flex items-center gap-2">
@@ -595,7 +838,7 @@ export default function SubmissionDetailPage() {
 
                   {submission.status === 'Analysis Complete' || submission.status === 'Findings Report Emailed' ? (
                     <Button variant="outline" className="w-full" asChild>
-                      <Link 
+                      <Link
                         href={`/api/download/report/${submission.submissionId}?userId=${submission.userId}`}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -617,7 +860,7 @@ export default function SubmissionDetailPage() {
                             }
                             return true;
                           };
-                          
+
                           // This is a bit of a hack since we can't await in an onClick handler
                           // It will prevent the default action, check the file, and if it exists, manually navigate
                           e.preventDefault();
