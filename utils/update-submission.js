@@ -12,9 +12,10 @@ const http = require('http');
  * @param {string} apiUrl - The base URL of the API (e.g., 'https://civicstream.com')
  * @param {string} submissionId - The ID of the submission to update
  * @param {string} status - The new status ('Processing', 'Analysis Complete', 'Findings Report Emailed')
+ * @param {Object} findings - Optional findings data to include with the submission
  * @returns {Promise<Object>} - The updated submission object
  */
-async function updateSubmissionStatus(apiUrl, submissionId, status) {
+async function updateSubmissionStatus(apiUrl, submissionId, status, findings = null) {
   if (!submissionId || !status) {
     throw new Error('Both submissionId and status are required');
   }
@@ -38,6 +39,7 @@ async function updateSubmissionStatus(apiUrl, submissionId, status) {
   const requestBody = JSON.stringify({
     submissionId,
     status,
+    ...(findings ? { findings } : {})
   });
 
   return new Promise((resolve, reject) => {

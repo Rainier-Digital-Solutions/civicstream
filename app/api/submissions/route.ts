@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-    const { submissionId, status } = body;
+    const { submissionId, status, findings } = body;
 
     if (!submissionId) {
       return NextResponse.json({ error: 'Submission ID is required' }, { status: 400 });
@@ -146,20 +146,31 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Submission not found' }, { status: 404 });
     }
 
-    // Update the submission status
+    // Prepare update expression and attribute values
+    let updateExpression = 'SET #status = :status, updatedAt = :updatedAt';
+    const expressionAttributeNames: Record<string, string> = {
+      '#status': 'status'
+    };
+    const expressionAttributeValues: Record<string, any> = {
+      ':status': status,
+      ':updatedAt': new Date().toISOString()
+    };
+
+    // Add findings to update if provided
+    if (findings) {
+      updateExpression += ', findings = :findings';
+      expressionAttributeValues[':findings'] = findings;
+    }
+
+    // Update the submission
     const updateParams: UpdateCommandInput = {
       TableName: TABLE_NAME,
       Key: {
         submissionId: submissionId
       },
-      UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt',
-      ExpressionAttributeNames: {
-        '#status': 'status'
-      },
-      ExpressionAttributeValues: {
-        ':status': status,
-        ':updatedAt': new Date().toISOString()
-      },
+      UpdateExpression: updateExpression,
+      ExpressionAttributeNames: expressionAttributeNames,
+      ExpressionAttributeValues: expressionAttributeValues,
       ReturnValues: 'ALL_NEW'
     };
 
@@ -167,7 +178,7 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: 'Submission status updated successfully',
+      message: 'Submission updated successfully',
       submission: updateResponse.Attributes
     });
   } catch (error) {
