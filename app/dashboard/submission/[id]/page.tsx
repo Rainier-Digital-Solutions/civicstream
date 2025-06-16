@@ -291,7 +291,39 @@ export default function SubmissionDetailPage() {
                 <div className="flex items-center gap-2">
                   {getStatusBadge(submission.status)}
                   <Button variant="outline" asChild>
-                    <Link href="#" onClick={(e) => e.preventDefault()}>
+                    <Link 
+                      href={`/api/download/plan/${submission.submissionId}?userId=${submission.userId}`} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      onClick={(e) => {
+                        // Add client-side error handling for expired files
+                        const handleDownloadError = async () => {
+                          try {
+                            const response = await fetch(`/api/download/plan/${submission.submissionId}?userId=${submission.userId}`);
+                            if (!response.ok) {
+                              const errorData = await response.json();
+                              if (errorData.code === 'FILE_EXPIRED') {
+                                e.preventDefault();
+                                alert('The plan file has expired. Due to storage limitations, plan files are only stored for 24 hours.');
+                                return false;
+                              }
+                            }
+                          } catch (error) {
+                            console.error('Error checking file availability:', error);
+                          }
+                          return true;
+                        };
+                        
+                        // This is a bit of a hack since we can't await in an onClick handler
+                        // It will prevent the default action, check the file, and if it exists, manually navigate
+                        e.preventDefault();
+                        handleDownloadError().then(exists => {
+                          if (exists) {
+                            window.open(`/api/download/plan/${submission.submissionId}?userId=${submission.userId}`, '_blank');
+                          }
+                        });
+                      }}
+                    >
                       <Download className="mr-2 h-4 w-4" />
                       Download Plan
                     </Link>
@@ -474,9 +506,11 @@ export default function SubmissionDetailPage() {
                   )}
                 </CardContent>
                 <CardFooter>
-                  <Button variant="outline" className="w-full">
-                    <Download className="mr-2 h-4 w-4" />
-                    Download Full Report
+                  <Button variant="outline" className="w-full" asChild>
+                    <Link href={`/api/download/report/${submission.submissionId}?userId=${submission.userId}`} target="_blank" rel="noopener noreferrer">
+                      <Download className="mr-2 h-4 w-4" />
+                      Download Full Report
+                    </Link>
                   </Button>
                 </CardFooter>
               </Card>
@@ -560,9 +594,43 @@ export default function SubmissionDetailPage() {
                   </Button>
 
                   {submission.status === 'Analysis Complete' || submission.status === 'Findings Report Emailed' ? (
-                    <Button variant="outline" className="w-full">
-                      <Download className="mr-2 h-4 w-4" />
-                      Download Report
+                    <Button variant="outline" className="w-full" asChild>
+                      <Link 
+                        href={`/api/download/report/${submission.submissionId}?userId=${submission.userId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => {
+                          // Add client-side error handling for expired files
+                          const handleDownloadError = async () => {
+                            try {
+                              const response = await fetch(`/api/download/report/${submission.submissionId}?userId=${submission.userId}`);
+                              if (!response.ok) {
+                                const errorData = await response.json();
+                                if (errorData.code === 'FILE_EXPIRED') {
+                                  e.preventDefault();
+                                  alert('The findings report has expired. Please contact support if you need access to this report.');
+                                  return false;
+                                }
+                              }
+                            } catch (error) {
+                              console.error('Error checking report availability:', error);
+                            }
+                            return true;
+                          };
+                          
+                          // This is a bit of a hack since we can't await in an onClick handler
+                          // It will prevent the default action, check the file, and if it exists, manually navigate
+                          e.preventDefault();
+                          handleDownloadError().then(exists => {
+                            if (exists) {
+                              window.open(`/api/download/report/${submission.submissionId}?userId=${submission.userId}`, '_blank');
+                            }
+                          });
+                        }}
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        Download Report
+                      </Link>
                     </Button>
                   ) : (
                     <Button variant="outline" className="w-full" disabled>

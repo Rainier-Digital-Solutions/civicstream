@@ -3,16 +3,17 @@
  * This utility manages WebSocket connections for real-time updates to submission statuses
  */
 
-// We'll use a placeholder URL for development - this would be replaced with your actual WebSocket API Gateway URL
-const WS_API_URL = process.env.NEXT_PUBLIC_WEBSOCKET_API_URL || 'wss://placeholder-websocket-api.execute-api.us-west-2.amazonaws.com/dev';
+// Use the actual WebSocket API URL from AWS API Gateway
+const WS_API_URL = process.env.NEXT_PUBLIC_WEBSOCKET_API_URL || 'wss://6g4l7w4jz5.execute-api.us-west-2.amazonaws.com/dev';
 
 type MessageHandler = (data: any) => void;
 type ConnectionHandler = () => void;
 
 interface WebSocketMessage {
-  action: string;
+  action?: string;
   submissionId?: string;
   data?: any;
+  body?: string | any; // API Gateway often wraps the message in a body property
 }
 
 class WebSocketClient {
@@ -66,23 +67,45 @@ class WebSocketClient {
       this.socket.onmessage = (event) => {
         try {
           console.log('WebSocket message received:', event.data);
-          const message = JSON.parse(event.data) as WebSocketMessage;
+          let message: WebSocketMessage;
           
-          if (message.action && this.messageHandlers.has(message.action)) {
-            console.log(`Processing message with action: ${message.action}`);
-            const handlers = this.messageHandlers.get(message.action);
+          try {
+            message = JSON.parse(event.data) as WebSocketMessage;
+          } catch (parseError) {
+            console.error('Error parsing WebSocket message:', parseError, 'Raw data:', event.data);
+            return;
+          }
+          
+          // Log the parsed message for debugging
+          console.log('Parsed WebSocket message:', message);
+          
+          // Handle both direct action messages and messages that might be wrapped in a body property
+          // (common in API Gateway WebSocket integrations)
+          const action = message.action || (message.body && typeof message.body === 'string' ? JSON.parse(message.body).action : null);
+          const submissionId = message.submissionId || (message.body && typeof message.body === 'string' ? JSON.parse(message.body).submissionId : null);
+          const data = message.data || (message.body && typeof message.body === 'string' ? JSON.parse(message.body).data : null);
+          
+          if (action && this.messageHandlers.has(action)) {
+            console.log(`Processing message with action: ${action}, submissionId: ${submissionId}`);
+            const handlers = this.messageHandlers.get(action);
             handlers?.forEach(handler => {
               try {
-                handler(message);
+                // Create a normalized message format for handlers
+                const normalizedMessage = {
+                  action,
+                  submissionId,
+                  data
+                };
+                handler(normalizedMessage);
               } catch (handlerError) {
                 console.error('Error in message handler:', handlerError);
               }
             });
           } else {
-            console.log(`No handlers registered for action: ${message.action || 'undefined'}`);
+            console.log(`No handlers registered for action: ${action || 'undefined'}`);
           }
         } catch (error) {
-          console.error('Error parsing WebSocket message:', error, 'Raw data:', event.data);
+          console.error('Error handling WebSocket message:', error, 'Raw data:', event.data);
         }
       };
       
