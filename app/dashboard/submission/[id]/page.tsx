@@ -366,14 +366,14 @@ export default function SubmissionDetailPage() {
                     {getStatusTimeline(submission.status).map((step, index) => (
                       <div key={index} className="flex flex-col items-center">
                         <div className={`rounded-full h-8 w-8 flex items-center justify-center border-2 ${step.completed
-                            ? 'bg-primary border-primary text-primary-foreground'
-                            : step.current
-                              ? 'bg-primary/20 border-primary text-primary'
-                              : 'bg-muted border-muted-foreground/20 text-muted-foreground'
+                          ? 'bg-primary border-primary text-primary-foreground'
+                          : step.current
+                            ? 'bg-primary/20 border-primary text-primary'
+                            : 'bg-muted border-muted-foreground/20 text-muted-foreground'
                           }`}>
                           {index + 1}
                         </div>
-                        <span className={`text-xs mt-1 ${step.completed || step.current ? 'font-medium' : 'text-muted-foreground'
+                        <span className={`text-[10px] sm:text-xs mt-1 ${step.completed || step.current ? 'font-medium' : 'text-muted-foreground'
                           }`}>
                           {step.name}
                         </span>
@@ -388,7 +388,7 @@ export default function SubmissionDetailPage() {
                 </div>
               </CardContent>
               {submission.status === 'Processing' && (
-                <CardFooter className="bg-amber-50 border-t border-amber-100">
+                <CardFooter className="bg-amber-50 border-t border-amber-100 p-6">
                   <div className="flex items-start gap-2 text-amber-700">
                     <Info className="h-5 w-5 mt-0.5 flex-shrink-0" />
                     <p className="text-sm">
@@ -399,7 +399,7 @@ export default function SubmissionDetailPage() {
                 </CardFooter>
               )}
               {submission.status === 'Analysis Complete' && (
-                <CardFooter className="bg-blue-50 border-t border-blue-100">
+                <CardFooter className="bg-blue-50 border-t border-blue-100 p-6">
                   <div className="flex items-start gap-2 text-blue-700">
                     <Info className="h-5 w-5 mt-0.5 flex-shrink-0" />
                     <p className="text-sm">
@@ -409,7 +409,7 @@ export default function SubmissionDetailPage() {
                 </CardFooter>
               )}
               {submission.status === 'Findings Report Emailed' && (
-                <CardFooter className="bg-green-50 border-t border-green-100">
+                <CardFooter className="bg-green-50 border-t border-green-100 p-6">
                   <div className="flex items-start gap-2 text-green-700">
                     <Info className="h-5 w-5 mt-0.5 flex-shrink-0" />
                     <p className="text-sm">
