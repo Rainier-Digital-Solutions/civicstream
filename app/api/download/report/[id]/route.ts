@@ -16,7 +16,7 @@ const s3 = new S3Client({ region });
 
 export async function GET(
   request: NextRequest
-): Promise<NextResponse> {
+): Promise<NextResponse | undefined> {
   // Variable declarations at the top for proper scope throughout the function
   let browser: any = null;
   let pdfBuffer: any = null;
@@ -149,14 +149,15 @@ export async function GET(
             color: #333;
             max-width: 800px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 30px 20px;
           }
           @page {
-            margin: 20mm;
+            margin: 30mm 20mm 20mm 20mm;
           }
           .header {
             margin-bottom: 30px;
-            padding-bottom: 10px;
+            padding-bottom: 15px;
+            padding-top: 15px;
           }
           .logo {
             font-size: 24px;
@@ -231,11 +232,15 @@ export async function GET(
       </head>
       <body>
         <div class="header">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
-            <div class="logo" style="color: #0066cc; font-size: 28px; font-weight: bold;">CivicStream</div>
-            <div style="text-align: right; font-size: 14px; color: #666;">
-              ${new Date().toLocaleDateString()}<br>
-              Report ID: ${submissionId.substring(0, 8)}
+          <div style="display: flex; flex-direction: column; margin-bottom: 15px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div class="logo" style="color: #0066cc; font-size: 28px; font-weight: bold;">CivicStream</div>
+              <div style="text-align: right; font-size: 14px; color: #666;">
+                ${new Date().toLocaleDateString()}
+              </div>
+            </div>
+            <div style="margin-top: 5px; font-size: 13px; color: #666;">
+              Report ID: ${submissionId.replace('submission-', '')}
             </div>
           </div>
           <div style="border-bottom: 4px solid #0066cc; margin-bottom: 10px;"></div>
@@ -432,17 +437,24 @@ export async function GET(
       }
       console.log('Upload to S3 successful');
 
-      // Generate a presigned URL for the S3 object
-      console.log('Generating presigned URL...');
-      const command = new GetObjectCommand({
-        Bucket: bucketName,
-        Key: s3Key,
-        ResponseContentDisposition: `attachment; filename="${reportFileName}"`,
-        ResponseContentType: 'application/pdf'
-      });
+      try {
+        // Generate a presigned URL for the S3 object
+        const presignedUrl = await getSignedUrl(
+          s3,
+          new GetObjectCommand({
+            Bucket: bucketName,
+            Key: s3Key,
+            ResponseContentDisposition: `attachment; filename="${reportFileName}"`
+          }),
+          { expiresIn: 3600 } // URL expires in 1 hour
+        );
 
-      const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 }); // 1 hour
-      console.log('Presigned URL generated');
+        console.log(`Generated presigned URL: ${presignedUrl.substring(0, 50)}...`);
+        // Return the presigned URL as JSON instead of redirecting
+        return NextResponse.json({ success: true, downloadUrl: presignedUrl });
+      } catch (error) {
+        console.error('Error generating presigned URL:', error);
+      }
 
       // Update the submission with the report S3 key
       console.log('Updating submission with report key...');
@@ -458,27 +470,27 @@ export async function GET(
       );
       console.log('Submission updated successfully');
 
-      // Redirect to the presigned URL
-      console.log('Redirecting to PDF URL');
-      return NextResponse.redirect(presignedUrl);
-
+      // This code will never execute because we return inside the try block above
     } catch (error: any) {
       console.error('Error in PDF generation:', error);
 
-      // If we have the PDF but failed in later steps, try to return it directly
+      // If we have the PDF but failed in later steps, return it as base64 data URL
       if (pdfBuffer) {
         try {
-          console.log('Attempting direct download fallback...');
-          const headers = new Headers();
-          headers.set('Content-Disposition', `attachment; filename="${reportFileName || 'findings-report.pdf'}"`);
-          headers.set('Content-Type', 'application/pdf');
-
-          return new NextResponse(pdfBuffer, {
-            status: 200,
-            headers,
+          console.log('Preparing direct download as data URL...');
+          // Convert buffer to base64 string
+          const base64Data = Buffer.from(pdfBuffer).toString('base64');
+          const dataUrl = `data:application/pdf;base64,${base64Data}`;
+          
+          // Return the data URL as JSON response
+          return NextResponse.json({
+            success: true,
+            fileName: reportFileName || 'findings-report.pdf',
+            downloadUrl: dataUrl,
+            isDataUrl: true
           });
         } catch (fallbackError) {
-          console.error('Fallback download failed:', fallbackError);
+          console.error('Fallback download preparation failed:', fallbackError);
         }
       }
 

@@ -77,6 +77,41 @@ export default function SubmissionDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Define fetchSubmissionDetails with useCallback to prevent it from changing on every render
+  // Helper function to download the report
+  const downloadReport = async (submissionId: string, userId: string) => {
+    try {
+      // Show loading state if needed
+
+      // Fetch the report data
+      const response = await fetch(`/api/download/report/${submissionId}?userId=${userId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to download report: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success && data.downloadUrl) {
+        if (data.isDataUrl) {
+          // For data URLs, create a link and trigger download
+          const link = document.createElement('a');
+          link.href = data.downloadUrl;
+          link.download = data.fileName || 'findings-report.pdf';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        } else {
+          // For presigned URLs, open in current tab
+          window.location.href = data.downloadUrl;
+        }
+      } else {
+        throw new Error('Invalid download response format');
+      }
+    } catch (error) {
+      console.error('Error downloading report:', error);
+      alert('There was a problem downloading the report. Please try again later.');
+    }
+  };
+
   const fetchSubmissionDetails = useCallback(async () => {
     try {
       const response = await fetch(`/api/submissions?submissionId=${submissionId}`);
@@ -305,43 +340,13 @@ export default function SubmissionDetailPage() {
                 <div className="flex items-center gap-2">
                   {getStatusBadge(submission.status)}
                   {(submission.status === 'Analysis Complete' || submission.status === 'Findings Report Emailed') && (
-                    <Button variant="outline" asChild>
-                      <Link
-                        href={`/api/download/report/${submission.submissionId}?userId=${submission.userId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => {
-                          // Add client-side error handling for expired files
-                          const handleDownloadError = async () => {
-                            try {
-                              const response = await fetch(`/api/download/report/${submission.submissionId}?userId=${submission.userId}`);
-                              if (!response.ok) {
-                                const errorData = await response.json();
-                                if (errorData.code === 'FILE_EXPIRED') {
-                                  e.preventDefault();
-                                  alert('The report file has expired. Please contact support if you need access to this report.');
-                                  return false;
-                                }
-                              }
-                            } catch (error) {
-                              console.error('Error checking report availability:', error);
-                            }
-                            return true;
-                          };
-
-                          // This is a bit of a hack since we can't await in an onClick handler
-                          // It will prevent the default action, check the file, and if it exists, manually navigate
-                          e.preventDefault();
-                          handleDownloadError().then(exists => {
-                            if (exists) {
-                              window.open(`/api/download/report/${submission.submissionId}?userId=${submission.userId}`, '_blank');
-                            }
-                          });
-                        }}
-                      >
-                        <Download className="mr-2 h-4 w-4" />
-                        Download Report
-                      </Link>
+                    <Button
+                      variant="outline"
+                      aria-label="Download PDF report"
+                      onClick={() => downloadReport(submission.submissionId, submission.userId)}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Download Report
                     </Button>
                   )}
                 </div>
@@ -737,7 +742,7 @@ export default function SubmissionDetailPage() {
                         <h3 style={{ color: '#3b82f6', fontSize: '18px', fontWeight: 600, margin: '25px 0 15px 0' }}>
                           🚀 Next Steps
                         </h3>
-                        <ol style={{ margin: '15px 0', paddingLeft: '20px', color: '#374151', lineHeight: '1.6' }}>
+                        <ol style={{ margin: '15px 0', paddingLeft: '20px', color: '', lineHeight: '1.6', listStyleType: 'decimal' }}>
                           <li>Review all findings in detail above</li>
                           <li>Make the necessary corrections to your plans and gather all missing documentation</li>
                           <li>Resubmit your corrected plans through our system</li>
@@ -751,11 +756,13 @@ export default function SubmissionDetailPage() {
                   )}
                 </CardContent>
                 <CardFooter>
-                  <Button variant="outline" className="w-full" asChild>
-                    <Link href={`/api/download/report/${submission.submissionId}?userId=${submission.userId}`} target="_blank" rel="noopener noreferrer">
-                      <Download className="mr-2 h-4 w-4" />
-                      Download Full Report
-                    </Link>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => downloadReport(submission.submissionId, submission.userId)}
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Download Full Report
                   </Button>
                 </CardFooter>
               </Card>
@@ -834,43 +841,13 @@ export default function SubmissionDetailPage() {
 
 
                   {submission.status === 'Analysis Complete' || submission.status === 'Findings Report Emailed' ? (
-                    <Button variant="outline" className="w-full" asChild>
-                      <Link
-                        href={`/api/download/report/${submission.submissionId}?userId=${submission.userId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => {
-                          // Add client-side error handling for expired files
-                          const handleDownloadError = async () => {
-                            try {
-                              const response = await fetch(`/api/download/report/${submission.submissionId}?userId=${submission.userId}`);
-                              if (!response.ok) {
-                                const errorData = await response.json();
-                                if (errorData.code === 'FILE_EXPIRED') {
-                                  e.preventDefault();
-                                  alert('The findings report has expired. Please contact support if you need access to this report.');
-                                  return false;
-                                }
-                              }
-                            } catch (error) {
-                              console.error('Error checking report availability:', error);
-                            }
-                            return true;
-                          };
-
-                          // This is a bit of a hack since we can't await in an onClick handler
-                          // It will prevent the default action, check the file, and if it exists, manually navigate
-                          e.preventDefault();
-                          handleDownloadError().then(exists => {
-                            if (exists) {
-                              window.open(`/api/download/report/${submission.submissionId}?userId=${submission.userId}`, '_blank');
-                            }
-                          });
-                        }}
-                      >
-                        <Download className="mr-2 h-4 w-4" />
-                        Download Report
-                      </Link>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => downloadReport(submission.submissionId, submission.userId)}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Download Report
                     </Button>
                   ) : (
                     <Button variant="outline" className="w-full" disabled>
