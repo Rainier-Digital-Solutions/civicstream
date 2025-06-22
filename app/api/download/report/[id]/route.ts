@@ -14,15 +14,18 @@ const dynamoDB = DynamoDBDocumentClient.from(dynamoClient);
 
 const s3 = new S3Client({ region });
 
-type Params = {
-  id: string;
-};
+export async function GET(
+  request: NextRequest
+): Promise<NextResponse | undefined> {
+  // Variable declarations at the top for proper scope throughout the function
+  let browser: any = null;
+  let pdfBuffer: any = null;
+  let reportFileName = '';
 
-export async function GET(request: NextRequest) {
   try {
     // Get the submission ID from the URL params
     const pathParts = request.nextUrl.pathname.split('/');
-    const submissionId = pathParts[pathParts.length - 1].split('?')[0]; // Get the last part of the URL path
+    const submissionId = pathParts[pathParts.length - 1]; // Get the last part of the URL path
 
     // Get userId from query parameter for authentication
     const { searchParams } = new URL(request.url);
@@ -37,7 +40,7 @@ export async function GET(request: NextRequest) {
       TableName: process.env.SUBMISSIONS_TABLE || 'CivicStreamSubmissions',
       Key: { submissionId },
     }));
-    
+
     const submission = submissionResult.Item;
 
     // Check if submission exists and belongs to the authenticated user
@@ -49,29 +52,96 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized - Not your submission' }, { status: 403 });
     }
 
-    // Check if findings exist
+    // Log submission data for debugging
+    console.log('=== START SUBMISSION DEBUG ===');
+    console.log('Submission ID:', submissionId);
+    console.log('Submission status:', submission.status);
+    console.log('Submission keys:', Object.keys(submission));
+
+    // Check if findings exist in the submission
     if (!submission.findings) {
-      return NextResponse.json({ error: 'Findings not available yet' }, { status: 400 });
+      console.error('No findings data found in submission');
+      return NextResponse.json({
+        error: 'Findings not available yet. The analysis might still be in progress.',
+        submissionStatus: submission.status
+      }, { status: 400 });
     }
 
-    // Generate PDF from findings data
-    // Use local Chrome installation on macOS
-    const browser = await puppeteer.launch({
-      args: ['--no-sandbox'],
-      defaultViewport: { width: 1280, height: 720 },
-      executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      headless: true,
+    // Log findings structure
+    console.log('Findings keys:', Object.keys(submission.findings));
+
+    // Define all possible finding types
+    const findingTypes = [
+      'criticalFindings', 'majorFindings', 'minorFindings',
+      'missingPlans', 'missingPermits', 'missingDocumentation', 'missingInspectionCertificates'
+    ];
+
+    // Log counts for each finding type
+    findingTypes.forEach(type => {
+      const items = Array.isArray(submission.findings[type]) ? submission.findings[type] : [];
+      console.log(`${type}:`, items.length, 'items');
     });
 
-    const page = await browser.newPage();
+    // Ensure all expected arrays exist, even if empty
+    const findings = {
+      summary: submission.findings.summary || 'No summary available',
+      criticalFindings: Array.isArray(submission.findings.criticalFindings) ?
+        submission.findings.criticalFindings : [],
+      majorFindings: Array.isArray(submission.findings.majorFindings) ?
+        submission.findings.majorFindings : [],
+      minorFindings: Array.isArray(submission.findings.minorFindings) ?
+        submission.findings.minorFindings : [],
+      missingPlans: Array.isArray(submission.findings.missingPlans) ?
+        submission.findings.missingPlans : [],
+      missingPermits: Array.isArray(submission.findings.missingPermits) ?
+        submission.findings.missingPermits : [],
+      missingDocumentation: Array.isArray(submission.findings.missingDocumentation) ?
+        submission.findings.missingDocumentation : [],
+      missingInspectionCertificates: Array.isArray(submission.findings.missingInspectionCertificates) ?
+        submission.findings.missingInspectionCertificates : [],
+      totalFindings: typeof submission.findings.totalFindings === 'number' ?
+        submission.findings.totalFindings : 0
+    };
 
-    // Create HTML content for the PDF
-    const htmlContent = `
+    console.log('Processed findings summary:', {
+      critical: findings.criticalFindings.length,
+      major: findings.majorFindings.length,
+      minor: findings.minorFindings.length,
+      missingPlans: findings.missingPlans.length,
+      missingPermits: findings.missingPermits.length,
+      missingDocs: findings.missingDocumentation.length,
+      missingInspections: findings.missingInspectionCertificates.length,
+      total: findings.totalFindings
+    });
+    console.log('=== END FINDINGS DEBUG ===');
+
+    // Generate PDF from findings data
+    let browser;
+    try {
+      console.log('Launching browser for PDF generation...');
+      browser = await puppeteer.launch({
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        defaultViewport: { width: 1280, height: 720 },
+        executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        headless: true, // Using boolean true for compatibility
+      });
+
+      console.log('Creating new page...');
+      const page = await browser.newPage();
+
+      // Set a longer timeout for page operations
+      page.setDefaultNavigationTimeout(60000);
+      page.setDefaultTimeout(60000);
+
+      // Create HTML content for the PDF
+      console.log('Generating HTML content...');
+      const htmlContent = `
       <!DOCTYPE html>
       <html>
       <head>
         <meta charset="UTF-8">
         <title>CivicStream Analysis Findings</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
           body {
             font-family: Arial, sans-serif;
@@ -79,13 +149,15 @@ export async function GET(request: NextRequest) {
             color: #333;
             max-width: 800px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 30px 20px;
+          }
+          @page {
+            margin: 30mm 20mm 20mm 20mm;
           }
           .header {
-            text-align: center;
             margin-bottom: 30px;
-            border-bottom: 2px solid #0066cc;
-            padding-bottom: 10px;
+            padding-bottom: 15px;
+            padding-top: 15px;
           }
           .logo {
             font-size: 24px;
@@ -160,8 +232,19 @@ export async function GET(request: NextRequest) {
       </head>
       <body>
         <div class="header">
-          <div class="logo">CivicStream</div>
-          <p>Architectural Plan Analysis Report</p>
+          <div style="display: flex; flex-direction: column; margin-bottom: 15px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div class="logo" style="color: #0066cc; font-size: 28px; font-weight: bold;">CivicStream</div>
+              <div style="text-align: right; font-size: 14px; color: #666;">
+                ${new Date().toLocaleDateString()}
+              </div>
+            </div>
+            <div style="margin-top: 5px; font-size: 13px; color: #666;">
+              Report ID: ${submissionId.replace('submission-', '')}
+            </div>
+          </div>
+          <div style="border-bottom: 4px solid #0066cc; margin-bottom: 10px;"></div>
+          <p style="font-size: 18px; text-align: center; margin: 10px 0;">Architectural Plan Analysis Report</p>
         </div>
         
         <h1>Analysis Findings Report</h1>
@@ -187,46 +270,130 @@ export async function GET(request: NextRequest) {
         
         <div class="summary">
           <h2>Executive Summary</h2>
-          <p>${submission.findings.summary}</p>
+          <p>${findings.summary}</p>
         </div>
         
         <h2>Finding Counts</h2>
         <ul>
-          ${submission.findings.details?.map((category: { category: string, items: any[] }) =>
-      `<li>${category.category}: ${category.items.length} finding${category.items.length !== 1 ? 's' : ''}</li>`
-    ).join('')}
-          <li><strong>Total: ${submission.findings.details?.reduce((total: number, category: { items: any[] }) => total + category.items.length, 0) || 0} findings</strong></li>
+          <li>Critical Findings: ${findings.criticalFindings.length}</li>
+          <li>Major Findings: ${findings.majorFindings.length}</li>
+          <li>Minor Findings: ${findings.minorFindings.length}</li>
+          <li>Missing Plans: ${findings.missingPlans.length}</li>
+          <li>Missing Permits: ${findings.missingPermits.length}</li>
+          <li>Missing Documentation: ${findings.missingDocumentation.length}</li>
+          <li>Missing Inspections: ${findings.missingInspectionCertificates.length}</li>
+          <li><strong>Total: ${findings.totalFindings} findings</strong></li>
         </ul>
         
         <h1>Detailed Findings</h1>
         
-        ${submission.findings.details?.map((category: { category: string, items: any[] }) => `
-          <h2>${category.category}</h2>
-          ${category.items.map((item: { title: string, description: string, recommendation?: string }) => {
-      let severityClass = 'info';
-      let severityIcon = 'ℹ️';
-
-      if (category.category === 'Code Compliance') {
-        severityClass = 'critical';
-        severityIcon = '🚨';
-      } else if (category.category === 'Design Considerations') {
-        severityClass = 'warning';
-        severityIcon = '⚠️';
-      }
-
-      return `
-              <div class="finding ${severityClass}">
-                <h3>${severityIcon} ${item.title}</h3>
-                <p><strong>Description:</strong> ${item.description}</p>
-                ${item.recommendation ?
-          `<div class="recommendation">
-                    <strong>Remedial Action:</strong> ${item.recommendation}
-                  </div>` : ''
-        }
+        ${findings.criticalFindings.length > 0 ? `
+          <h2>Critical Findings</h2>
+          ${findings.criticalFindings.map((item: any) => `
+            <div class="finding critical">
+              <h3>🚨 Critical Finding: ${item.description?.split(':')[0] || 'Issue'}</h3>
+              <p><strong>Description:</strong> ${item.description || 'No description available'}</p>
+              <p><strong>Code Section:</strong> ${item.codeSection || 'N/A'}</p>
+              <div class="recommendation">
+                <strong>Remedial Action:</strong> ${item.remedialAction || 'No specific action provided.'}
               </div>
-            `;
-    }).join('')}
-        `).join('')}
+              ${item.confidenceScore ? `<p><strong>Confidence:</strong> ${Math.round(item.confidenceScore * 100)}%</p>` : ''}
+            </div>
+          `).join('')}
+        ` : ''}
+        
+        ${findings.majorFindings.length > 0 ? `
+          <h2>Major Findings</h2>
+          ${findings.majorFindings.map((item: any) => `
+            <div class="finding warning">
+              <h3>⚠️ Major Finding: ${item.description?.split(':')[0] || 'Issue'}</h3>
+              <p><strong>Description:</strong> ${item.description || 'No description available'}</p>
+              <p><strong>Code Section:</strong> ${item.codeSection || 'N/A'}</p>
+              <div class="recommendation">
+                <strong>Remedial Action:</strong> ${item.remedialAction || 'No specific action provided.'}
+              </div>
+              ${item.confidenceScore ? `<p><strong>Confidence:</strong> ${Math.round(item.confidenceScore * 100)}%</p>` : ''}
+            </div>
+          `).join('')}
+        ` : ''}
+        
+        ${findings.minorFindings.length > 0 ? `
+          <h2>Minor Findings</h2>
+          ${findings.minorFindings.map((item: any) => `
+            <div class="finding info">
+              <h3>💡 Minor Finding: ${item.description?.split(':')[0] || 'Issue'}</h3>
+              <p><strong>Description:</strong> ${item.description || 'No description available'}</p>
+              <p><strong>Code Section:</strong> ${item.codeSection || 'N/A'}</p>
+              <div class="recommendation">
+                <strong>Remedial Action:</strong> ${item.remedialAction || 'No specific action provided.'}
+              </div>
+              ${item.confidenceScore ? `<p><strong>Confidence:</strong> ${Math.round(item.confidenceScore * 100)}%</p>` : ''}
+            </div>
+          `).join('')}
+        ` : ''}
+        
+        ${findings.missingPlans.length > 0 ? `
+          <h2>Missing Plans</h2>
+          ${findings.missingPlans.map((item: any) => `
+            <div class="finding">
+              <h3>📐 Missing Plan: ${item.description?.split(':')[0] || 'Plan'}</h3>
+              <p><strong>Description:</strong> ${item.description || 'No description available'}</p>
+              <p><strong>Code Requirement:</strong> ${item.codeSection || 'N/A'}</p>
+              <div class="recommendation">
+                <strong>Action Required:</strong> ${item.remedialAction || 'No specific action provided.'}
+              </div>
+            </div>
+          `).join('')}
+        ` : ''}
+        
+        ${findings.missingPermits.length > 0 ? `
+          <h2>Missing Permits</h2>
+          ${findings.missingPermits.map((item: any) => `
+            <div class="finding">
+              <h3>📄 Missing Permit: ${item.description?.split(':')[0] || 'Permit'}</h3>
+              <p><strong>Description:</strong> ${item.description || 'No description available'}</p>
+              <p><strong>Code Requirement:</strong> ${item.codeSection || 'N/A'}</p>
+              <div class="recommendation">
+                <strong>Action Required:</strong> ${item.remedialAction || 'No specific action provided.'}
+              </div>
+            </div>
+          `).join('')}
+        ` : ''}
+        
+        ${findings.missingDocumentation.length > 0 ? `
+          <h2>Missing Documentation</h2>
+          ${findings.missingDocumentation.map((item: any) => `
+            <div class="finding">
+              <h3>📋 Missing Documentation: ${item.description?.split(':')[0] || 'Documentation'}</h3>
+              <p><strong>Description:</strong> ${item.description || 'No description available'}</p>
+              <p><strong>Code Requirement:</strong> ${item.codeSection || 'N/A'}</p>
+              <div class="recommendation">
+                <strong>Action Required:</strong> ${item.remedialAction || 'No specific action provided.'}
+              </div>
+            </div>
+          `).join('')}
+        ` : ''}
+        
+        ${findings.missingInspectionCertificates.length > 0 ? `
+          <h2>Missing Inspections</h2>
+          ${findings.missingInspectionCertificates.map((item: any) => `
+            <div class="finding">
+              <h3>✅ Missing Inspection: ${item.description?.split(':')[0] || 'Inspection'}</h3>
+              <p><strong>Description:</strong> ${item.description || 'No description available'}</p>
+              <p><strong>Code Requirement:</strong> ${item.codeSection || 'N/A'}</p>
+              <div class="recommendation">
+                <strong>Action Required:</strong> ${item.remedialAction || 'No specific action provided.'}
+              </div>
+            </div>
+          `).join('')}
+        ` : ''}
+        
+        <h2>Next Steps</h2>
+        <ol>
+          <li>Review all findings in detail above</li>
+          <li>Make the necessary corrections to your plans and gather all missing documentation</li>
+          <li>Resubmit your corrected plans through our system</li>
+        </ol>
         
         <div class="footer">
           <p>This report was generated by CivicStream on ${new Date().toLocaleString()}</p>
@@ -236,94 +403,120 @@ export async function GET(request: NextRequest) {
       </html>
     `;
 
-    await page.setContent(htmlContent);
+      await page.setContent(htmlContent);
 
-    // Generate PDF
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: {
-        top: '20px',
-        right: '20px',
-        bottom: '20px',
-        left: '20px'
+      // Generate PDF
+      pdfBuffer = await page.pdf({
+        format: 'A4',
+        printBackground: true,
+        margin: {
+          top: '20px',
+          right: '20px',
+          bottom: '20px',
+          left: '20px'
+        }
+      });
+
+      console.log(`PDF generated (${pdfBuffer.length} bytes)`);
+
+      // Generate a filename for the report
+      reportFileName = `CivicStream-Findings-${submissionId}.pdf`;
+      const s3Key = `reports/${submissionId}/${reportFileName}`;
+      const bucketName = process.env.S3_BUCKET_NAME || 'civicstream-reports';
+
+      console.log(`Uploading to S3: ${s3Key}`);
+      if (pdfBuffer) {
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: bucketName,
+            Key: s3Key,
+            Body: pdfBuffer,
+            ContentType: 'application/pdf',
+          })
+        );
       }
-    });
+      console.log('Upload to S3 successful');
 
-    await browser.close();
-
-    // Generate a filename for the report
-    const reportFileName = `CivicStream-Findings-${submissionId}.pdf`;
-    const s3Key = `reports/${submissionId}/${reportFileName}`;
-    const bucketName = process.env.S3_BUCKET_NAME || 'civicstream-plan-storage-c692c0ba';
-
-    try {
-      // Check if the report already exists in S3
-      let reportExists = false;
       try {
-        await s3.send(new HeadObjectCommand({
-          Bucket: bucketName,
-          Key: s3Key
-        }));
-        reportExists = true;
+        // Generate a presigned URL for the S3 object
+        const presignedUrl = await getSignedUrl(
+          s3,
+          new GetObjectCommand({
+            Bucket: bucketName,
+            Key: s3Key,
+            ResponseContentDisposition: `attachment; filename="${reportFileName}"`
+          }),
+          { expiresIn: 3600 } // URL expires in 1 hour
+        );
+
+        console.log(`Generated presigned URL: ${presignedUrl.substring(0, 50)}...`);
+        // Return the presigned URL as JSON instead of redirecting
+        return NextResponse.json({ success: true, downloadUrl: presignedUrl });
       } catch (error) {
-        // Object doesn't exist, we'll upload it
-        reportExists = false;
+        console.error('Error generating presigned URL:', error);
       }
 
-      // If report doesn't exist in S3, upload it
-      if (!reportExists) {
-        await s3.send(new PutObjectCommand({
-          Bucket: bucketName,
-          Key: s3Key,
-          Body: pdfBuffer,
-          ContentType: 'application/pdf',
-          Metadata: {
-            submissionId: submissionId,
-            reportType: 'findings'
-          }
-        }));
-
-        console.log(`Uploaded findings report to S3: ${s3Key}`);
-
-        // Update the submission record with the report S3 key
-        await dynamoDB.send(new UpdateCommand({
+      // Update the submission with the report S3 key
+      console.log('Updating submission with report key...');
+      await dynamoDB.send(
+        new UpdateCommand({
           TableName: process.env.SUBMISSIONS_TABLE || 'CivicStreamSubmissions',
           Key: { submissionId },
           UpdateExpression: 'set reportS3Key = :reportS3Key',
           ExpressionAttributeValues: {
-            ':reportS3Key': s3Key
-          }
-        }));
+            ':reportS3Key': s3Key,
+          },
+        })
+      );
+      console.log('Submission updated successfully');
+
+      // This code will never execute because we return inside the try block above
+    } catch (error: any) {
+      console.error('Error in PDF generation:', error);
+
+      // If we have the PDF but failed in later steps, return it as base64 data URL
+      if (pdfBuffer) {
+        try {
+          console.log('Preparing direct download as data URL...');
+          // Convert buffer to base64 string
+          const base64Data = Buffer.from(pdfBuffer).toString('base64');
+          const dataUrl = `data:application/pdf;base64,${base64Data}`;
+          
+          // Return the data URL as JSON response
+          return NextResponse.json({
+            success: true,
+            fileName: reportFileName || 'findings-report.pdf',
+            downloadUrl: dataUrl,
+            isDataUrl: true
+          });
+        } catch (fallbackError) {
+          console.error('Fallback download preparation failed:', fallbackError);
+        }
       }
 
-      // Generate a presigned URL for the report with a 15-minute expiration
-      const getObjectCommand = new GetObjectCommand({
-        Bucket: bucketName,
-        Key: s3Key,
-        ResponseContentDisposition: `attachment; filename="${reportFileName}"`,
-        ResponseContentType: 'application/pdf'
-      });
-      
-      const presignedUrl = await getSignedUrl(s3, getObjectCommand, { expiresIn: 900 }); // 15 minutes in seconds
-
-      // Redirect the user to the presigned URL for direct download
-      return NextResponse.redirect(presignedUrl);
-    } catch (s3Error) {
-      console.error('Error handling S3 operations:', s3Error);
-
-      // If S3 operations fail, fall back to direct download
-      const headers = new Headers();
-      headers.set('Content-Disposition', `attachment; filename="${reportFileName}"`);
-      headers.set('Content-Type', 'application/pdf');
-
-      return new NextResponse(pdfBuffer, {
-        status: 200,
-        headers,
-      });
+      return NextResponse.json(
+        {
+          error: 'Failed to generate PDF',
+          message: error.message,
+          ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
+        },
+        { status: 500 }
+      );
+    } finally {
+      if (browser) {
+        console.log('Closing browser...');
+        try {
+          await browser.close();
+        } catch (e) {
+          console.error('Error closing browser:', e);
+        }
+      }
     }
-  } catch (error) {
-    console.error('Error generating findings report:', error);
-    return NextResponse.json({ error: 'Failed to generate findings report' }, { status: 500 });
+  } catch (outerError: any) {
+    console.error('Unhandled error in report generation:', outerError);
+    return NextResponse.json(
+      { error: 'Failed to generate report', message: outerError.message },
+      { status: 500 }
+    );
   }
 }
