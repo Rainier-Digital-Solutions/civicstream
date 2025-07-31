@@ -1,11 +1,11 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import Script from 'next/script';
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/toaster";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { Navbar } from "@/components/navbar";
+import HubSpotTracking from "@/components/HubSpotTracking";
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -81,16 +81,9 @@ export default function RootLayout({
               {children}
             </main>
             <Toaster />
+            <HubSpotTracking />
           </AuthProvider>
         </ThemeProvider>
-
-        {/* HubSpot Tracking Code */}
-        <Script
-          id="hs-script-loader"
-          src="//js-na2.hs-scripts.com/243464187.js"
-          async
-          defer
-        />
       </body>
     </html>
   );
