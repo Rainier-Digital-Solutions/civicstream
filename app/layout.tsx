@@ -1,8 +1,6 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import Script from 'next/script';
-import { Suspense } from 'react';
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/toaster";
 import { AuthProvider } from "@/contexts/AuthContext";
@@ -70,16 +68,6 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        {/* HubSpot Script needs to be loaded before the tracker component */}
-        <Script
-          type="text/javascript"
-          id="hs-script-loader"
-          async
-          defer
-          src="//js-na2.hs-scripts.com/243464187.js"
-        />
-      </head>
       <body className={inter.className}>
         <ThemeProvider
           attribute="class"
@@ -93,9 +81,7 @@ export default function RootLayout({
               {children}
             </main>
             <Toaster />
-            <Suspense fallback={null}>
-              <HubSpotTracking />
-            </Suspense>
+            <HubSpotTracking />
           </AuthProvider>
         </ThemeProvider>
       </body>
