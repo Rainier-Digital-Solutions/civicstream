@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import Script from 'next/script';
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/toaster";
 import { AuthProvider } from "@/contexts/AuthContext";
@@ -82,6 +83,13 @@ export default function RootLayout({
             <Toaster />
           </AuthProvider>
         </ThemeProvider>
+
+        {/* HubSpot Tracking Code */}
+        <Script
+          id="hs-script-loader"
+          src="//js-na2.hs-scripts.com/243464187.js"
+          strategy="afterInteractive"
+        />
       </body>
     </html>
   );
