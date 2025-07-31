@@ -70,11 +70,11 @@ export function Footer() {
             <h4 className="text-sm font-medium">Contact</h4>
             <ul className="space-y-2 text-sm">
               <li className="text-muted-foreground">
-                Seattle, WA 98101
+                Bellevue, WA
               </li>
               <li>
-                <Link href="mailto:info@civicstream.com" className="text-muted-foreground hover:text-foreground transition-colors">
-                  info@civicstream.com
+                <Link href="mailto:contact@civicstream.com" className="text-muted-foreground hover:text-foreground transition-colors">
+                  contact@civicstream.com
                 </Link>
               </li>
               <li>
