@@ -87,8 +87,9 @@ export default function RootLayout({
         {/* HubSpot Tracking Code */}
         <Script
           id="hs-script-loader"
-          src="https://js-na2.hs-scripts.com/243464187.js"
-          strategy="lazyOnload"
+          src="//js-na2.hs-scripts.com/243464187.js"
+          async
+          defer
         />
       </body>
     </html>
