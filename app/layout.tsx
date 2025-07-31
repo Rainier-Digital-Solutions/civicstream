@@ -68,6 +68,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <HubSpotTracking />
+      </head>
       <body className={inter.className}>
         <ThemeProvider
           attribute="class"
@@ -81,7 +84,6 @@ export default function RootLayout({
               {children}
             </main>
             <Toaster />
-            <HubSpotTracking />
           </AuthProvider>
         </ThemeProvider>
       </body>
