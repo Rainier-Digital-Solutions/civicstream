@@ -8,72 +8,72 @@ const s3 = new AWS.S3();
 
 // Initialize Claude
 const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
+  apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
 // Initialize Nodemailer
 const transporter = nodemailer.createTransporter({
-    host: process.env.EMAIL_HOST,
-    port: 465,
-    secure: process.env.EMAIL_SECURE === 'true',
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD,
-    },
+  host: process.env.EMAIL_HOST,
+  port: 465,
+  secure: process.env.EMAIL_SECURE === 'true',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASSWORD,
+  },
 });
 
 // Add Perplexity API integration for enhanced web search
 async function performWebSearch(query, maxResults = 5) {
-    // Try Perplexity API first if available
-    if (process.env.PERPLEXITY_API_KEY) {
-        try {
-            console.log('Using Perplexity API for web search:', query);
-            const response = await fetch('https://api.perplexity.ai/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    model: 'llama-3.1-sonar-small-128k-online',
-                    messages: [
-                        {
-                            role: 'system',
-                            content: 'You are a helpful assistant that searches for building codes and regulations. Return only the most relevant and recent information.'
-                        },
-                        {
-                            role: 'user',
-                            content: `Search for: ${query}. Please provide specific building codes, regulations, and official government sources.`
-                        }
-                    ],
-                    max_tokens: 10000,
-                    temperature: 0.2,
-                    return_citations: true
-                })
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                const content = data.choices[0]?.message?.content || '';
-                const citations = data.citations || [];
-
-                // Convert Perplexity response to SearchResult format
-                const results = citations.slice(0, maxResults).map((citation, index) => ({
-                    title: citation.title || `Building Code Reference ${index + 1}`,
-                    snippet: content.substring(0, 200) + '...',
-                    url: citation.url || '#'
-                }));
-
-                console.log(`Perplexity search returned ${results.length} results for query: ${query}`);
-                return results;
+  // Try Perplexity API first if available
+  if (process.env.PERPLEXITY_API_KEY) {
+    try {
+      console.log('Using Perplexity API for web search:', query);
+      const response = await fetch('https://api.perplexity.ai/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.1-sonar-small-128k-online',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a helpful assistant that searches for building codes and regulations. Return only the most relevant and recent information.'
+            },
+            {
+              role: 'user',
+              content: `Search for: ${query}. Please provide specific building codes, regulations, and official government sources.`
             }
-        } catch (error) {
-            console.warn('Perplexity search failed:', error);
-        }
-    }
+          ],
+          max_tokens: 10000,
+          temperature: 0.2,
+          return_citations: true
+        })
+      });
 
-    console.log('Perplexity API not available, returning empty search results');
-    return [];
+      if (response.ok) {
+        const data = await response.json();
+        const content = data.choices[0]?.message?.content || '';
+        const citations = data.citations || [];
+
+        // Convert Perplexity response to SearchResult format
+        const results = citations.slice(0, maxResults).map((citation, index) => ({
+          title: citation.title || `Building Code Reference ${index + 1}`,
+          snippet: content.substring(0, 200) + '...',
+          url: citation.url || '#'
+        }));
+
+        console.log(`Perplexity search returned ${results.length} results for query: ${query}`);
+        return results;
+      }
+    } catch (error) {
+      console.warn('Perplexity search failed:', error);
+    }
+  }
+
+  console.log('Perplexity API not available, returning empty search results');
+  return [];
 }
 
 const COMPLIANCE_REVIEW_PROMPT = `
@@ -281,93 +281,93 @@ REMEMBER: Your response must be ONLY a valid JSON object. You MUST include actua
 `;
 
 exports.handler = async (event) => {
-    console.log('Processing SQS messages:', JSON.stringify(event, null, 2));
+  console.log('Processing SQS messages:', JSON.stringify(event, null, 2));
 
-    for (const record of event.Records) {
-        try {
-            const message = JSON.parse(record.body);
-            const { submissionId, s3Key, fileName, submitterEmail, cityPlannerEmail, projectDetails } = message;
+  for (const record of event.Records) {
+    try {
+      const message = JSON.parse(record.body);
+      const { submissionId, s3Key, fileName, submitterEmail, cityPlannerEmail, projectDetails } = message;
 
-            console.log(`Processing submission: ${submissionId}`);
+      console.log(`Processing submission: ${submissionId}`);
 
-            // Download PDF from S3
-            console.log(`Downloading PDF from S3: ${s3Key}`);
-            const pdfObject = await s3.getObject({
-                Bucket: process.env.S3_BUCKET_NAME,
-                Key: s3Key
-            }).promise();
+      // Download PDF from S3
+      console.log(`Downloading PDF from S3: ${s3Key}`);
+      const pdfObject = await s3.getObject({
+        Bucket: process.env.S3_BUCKET_NAME,
+        Key: s3Key
+      }).promise();
 
-            console.log(`Downloaded PDF from S3: ${s3Key}, size: ${pdfObject.Body.length}`);
+      console.log(`Downloaded PDF from S3: ${s3Key}, size: ${pdfObject.Body.length}`);
 
-            // Extract text from PDF
-            console.log('Extracting text from PDF for Claude analysis');
-            let pdfTextContent = '';
-            
-            try {
-                const pdfData = await pdf(pdfObject.Body);
-                pdfTextContent = pdfData.text;
-                console.log(`Successfully extracted text from PDF, length: ${pdfTextContent.length}`);
-            } catch (pdfError) {
-                console.error('Failed to extract text from PDF:', pdfError);
-                pdfTextContent = `Unable to extract text from PDF file "${fileName}". Performing template-based review for ${projectDetails.city}, ${projectDetails.county} based on typical residential requirements.`;
-            }
+      // Extract text from PDF
+      console.log('Extracting text from PDF for Claude analysis');
+      let pdfTextContent = '';
 
-            // Perform real Claude analysis
-            console.log('Starting Claude plan review analysis');
-            const reviewResult = await reviewPlanWithClaude(pdfTextContent, projectDetails);
-            
-            console.log(`Claude review completed for submission: ${submissionId}`);
-            console.log(`Review summary: ${reviewResult.summary}`);
-            console.log(`Total findings: ${reviewResult.totalFindings}, Compliant: ${reviewResult.isCompliant}`);
+      try {
+        const pdfData = await pdf(pdfObject.Body);
+        pdfTextContent = pdfData.text;
+        console.log(`Successfully extracted text from PDF, length: ${pdfTextContent.length}`);
+      } catch (pdfError) {
+        console.error('Failed to extract text from PDF:', pdfError);
+        pdfTextContent = `Unable to extract text from PDF file "${fileName}". Performing template-based review for ${projectDetails.city}, ${projectDetails.county} based on typical residential requirements.`;
+      }
 
-            // Send emails with real Claude results
-            await Promise.all([
-                sendEmail(submitterEmail, 
-                    reviewResult.isCompliant ? 'Plan Review Complete - Approved' : 'Plan Review Results - Action Required', 
-                    reviewResult.submitterEmailBody),
-                sendEmail(cityPlannerEmail, 
-                    reviewResult.isCompliant ? 'Plan Review Complete - Approved' : 'Plan Review Results - Review Required', 
-                    reviewResult.cityPlannerEmailBody)
-            ]);
+      // Perform real Claude analysis
+      console.log('Starting Claude plan review analysis');
+      const reviewResult = await reviewPlanWithClaude(pdfTextContent, projectDetails);
 
-            console.log(`Emails sent for submission: ${submissionId}`);
+      console.log(`Claude review completed for submission: ${submissionId}`);
+      console.log(`Review summary: ${reviewResult.summary}`);
+      console.log(`Total findings: ${reviewResult.totalFindings}, Compliant: ${reviewResult.isCompliant}`);
 
-            // Clean up S3 object
-            await s3.deleteObject({
-                Bucket: process.env.S3_BUCKET_NAME,
-                Key: s3Key
-            }).promise();
+      // Send emails with real Claude results
+      await Promise.all([
+        sendEmail(submitterEmail,
+          reviewResult.isCompliant ? 'Plan Review Complete - Approved' : 'Plan Review Results - Action Required',
+          reviewResult.submitterEmailBody),
+        sendEmail(cityPlannerEmail,
+          reviewResult.isCompliant ? 'Plan Review Complete - Approved' : 'Plan Review Results - Review Required',
+          reviewResult.cityPlannerEmailBody)
+      ]);
 
-            console.log(`Cleaned up S3 object: ${s3Key}`);
+      console.log(`Emails sent for submission: ${submissionId}`);
 
-        } catch (error) {
-            console.error('Error processing message:', error);
-            throw error; // This will send the message to DLQ after retries
-        }
+      // Clean up S3 object
+      await s3.deleteObject({
+        Bucket: process.env.S3_BUCKET_NAME,
+        Key: s3Key
+      }).promise();
+
+      console.log(`Cleaned up S3 object: ${s3Key}`);
+
+    } catch (error) {
+      console.error('Error processing message:', error);
+      throw error; // This will send the message to DLQ after retries
     }
+  }
 
-    return { statusCode: 200, body: JSON.stringify({ message: 'Processing complete' }) };
+  return { statusCode: 200, body: JSON.stringify({ message: 'Processing complete' }) };
 };
 
 async function reviewPlanWithClaude(pdfTextContent, projectDetails, maxRetries = 3) {
-    console.log('Starting Claude architectural plan review');
-    
-    let attempts = 0;
-    let lastError = null;
+  console.log('Starting Claude architectural plan review');
 
-    while (attempts < maxRetries) {
-        try {
-            // First, perform web search for building codes
-            const searchQuery = `building codes regulations ${projectDetails.city} ${projectDetails.county} Washington state zoning requirements single family residence`;
-            console.log('Performing web search for building codes:', searchQuery);
-            const searchResults = await performWebSearch(searchQuery, 5);
-            console.log('Web search returned', searchResults.length, 'results');
+  let attempts = 0;
+  let lastError = null;
 
-            const searchResultsText = searchResults.map(result =>
-                `Title: ${result.title}\\nURL: ${result.url}\\nSnippet: ${result.snippet}`
-            ).join('\\n\\n');
+  while (attempts < maxRetries) {
+    try {
+      // First, perform web search for building codes
+      const searchQuery = `building codes regulations ${projectDetails.city} ${projectDetails.county} Washington state zoning requirements single family residence`;
+      console.log('Performing web search for building codes:', searchQuery);
+      const searchResults = await performWebSearch(searchQuery, 5);
+      console.log('Web search returned', searchResults.length, 'results');
 
-            const userMessage = `
+      const searchResultsText = searchResults.map(result =>
+        `Title: ${result.title}\\nURL: ${result.url}\\nSnippet: ${result.snippet}`
+      ).join('\\n\\n');
+
+      const userMessage = `
 Project Details:
 Address: ${projectDetails.address}
 Parcel Number: ${projectDetails.parcelNumber}
@@ -405,123 +405,123 @@ TYPICAL CODE COMPLIANCE ISSUES:
 
 Generate specific, realistic findings with proper code references (like "IRC Section 123.4" or "King County Code 21A.24.XXX"). Provide detailed review following the required JSON format with properly formatted HTML email bodies that include the full detailed findings list.`;
 
-            console.log(`Claude attempt ${attempts + 1}/${maxRetries}: Sending request`);
-            
-            // Add timeout handling
-            const timeoutMs = 300000; // 5 minutes
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-            
-            try {
-                const response = await anthropic.messages.create({
-                    model: "claude-sonnet-4-20250514",
-                    max_tokens: 20000,
-                    messages: [
-                        {
-                            role: "user",
-                            content: [
-                                {
-                                    type: "text",
-                                    text: COMPLIANCE_REVIEW_PROMPT
-                                },
-                                {
-                                    type: "text",
-                                    text: userMessage
-                                }
-                            ]
-                        }
-                    ]
-                });
-                
-                clearTimeout(timeoutId);
+      console.log(`Claude attempt ${attempts + 1}/${maxRetries}: Sending request`);
 
-                const content = response.content[0];
-                if (content.type !== 'text') {
-                    throw new Error('No text response received from Claude');
+      // Add timeout handling
+      const timeoutMs = 300000; // 5 minutes
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await anthropic.messages.create({
+          model: "claude-4-sonnet-20250514",
+          max_tokens: 20000,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: COMPLIANCE_REVIEW_PROMPT
+                },
+                {
+                  type: "text",
+                  text: userMessage
                 }
-
-                console.log('Claude raw response length:', content.text.length);
-
-                try {
-                    // Preprocess content to remove markdown formatting
-                    let processedContent = content.text;
-
-                    // Strip out markdown code block delimiters if present
-                    const jsonMatch = content.text.match(/```(?:json)?\\s*([\\s\\S]*?)```/);
-                    if (jsonMatch && jsonMatch[1]) {
-                        processedContent = jsonMatch[1].trim();
-                    }
-
-                    console.log('Processing Claude response for JSON extraction');
-                    const result = JSON.parse(processedContent);
-                    console.log('Successfully parsed Claude JSON response');
-
-                    // Enhanced validation of the response structure
-                    if (!result.summary || !Array.isArray(result.criticalFindings) ||
-                        !Array.isArray(result.majorFindings) || !Array.isArray(result.minorFindings) ||
-                        typeof result.totalFindings !== 'number' || typeof result.isCompliant !== 'boolean' ||
-                        !result.cityPlannerEmailBody || !result.submitterEmailBody) {
-                        throw new Error('Invalid response structure from Claude');
-                    }
-
-                    return {
-                        summary: result.summary,
-                        missingPlans: result.missingPlans || [],
-                        missingPermits: result.missingPermits || [],
-                        missingDocumentation: result.missingDocumentation || [],
-                        missingInspectionCertificates: result.missingInspectionCertificates || [],
-                        criticalFindings: result.criticalFindings,
-                        majorFindings: result.majorFindings,
-                        minorFindings: result.minorFindings,
-                        totalFindings: result.totalFindings,
-                        isCompliant: result.isCompliant,
-                        cityPlannerEmailBody: result.cityPlannerEmailBody,
-                        submitterEmailBody: result.submitterEmailBody
-                    };
-                } catch (parseError) {
-                    console.error(`Claude attempt ${attempts + 1} failed to parse JSON:`, parseError);
-                    console.error('Raw response that failed to parse:', content.text);
-                    lastError = parseError;
-
-                    if (attempts === maxRetries - 1) {
-                        return getDefaultErrorResponse(projectDetails);
-                    }
-                }
-            } catch (apiError) {
-                clearTimeout(timeoutId);
-                throw apiError;
+              ]
             }
-        } catch (error) {
-            console.error(`Claude attempt ${attempts + 1} failed with error:`, error);
-            lastError = error;
+          ]
+        });
 
-            if (attempts === maxRetries - 1) {
-                return getDefaultErrorResponse(projectDetails);
-            }
+        clearTimeout(timeoutId);
+
+        const content = response.content[0];
+        if (content.type !== 'text') {
+          throw new Error('No text response received from Claude');
         }
 
-        attempts++;
-        if (attempts < maxRetries) {
-            await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+        console.log('Claude raw response length:', content.text.length);
+
+        try {
+          // Preprocess content to remove markdown formatting
+          let processedContent = content.text;
+
+          // Strip out markdown code block delimiters if present
+          const jsonMatch = content.text.match(/```(?:json)?\\s*([\\s\\S]*?)```/);
+          if (jsonMatch && jsonMatch[1]) {
+            processedContent = jsonMatch[1].trim();
+          }
+
+          console.log('Processing Claude response for JSON extraction');
+          const result = JSON.parse(processedContent);
+          console.log('Successfully parsed Claude JSON response');
+
+          // Enhanced validation of the response structure
+          if (!result.summary || !Array.isArray(result.criticalFindings) ||
+            !Array.isArray(result.majorFindings) || !Array.isArray(result.minorFindings) ||
+            typeof result.totalFindings !== 'number' || typeof result.isCompliant !== 'boolean' ||
+            !result.cityPlannerEmailBody || !result.submitterEmailBody) {
+            throw new Error('Invalid response structure from Claude');
+          }
+
+          return {
+            summary: result.summary,
+            missingPlans: result.missingPlans || [],
+            missingPermits: result.missingPermits || [],
+            missingDocumentation: result.missingDocumentation || [],
+            missingInspectionCertificates: result.missingInspectionCertificates || [],
+            criticalFindings: result.criticalFindings,
+            majorFindings: result.majorFindings,
+            minorFindings: result.minorFindings,
+            totalFindings: result.totalFindings,
+            isCompliant: result.isCompliant,
+            cityPlannerEmailBody: result.cityPlannerEmailBody,
+            submitterEmailBody: result.submitterEmailBody
+          };
+        } catch (parseError) {
+          console.error(`Claude attempt ${attempts + 1} failed to parse JSON:`, parseError);
+          console.error('Raw response that failed to parse:', content.text);
+          lastError = parseError;
+
+          if (attempts === maxRetries - 1) {
+            return getDefaultErrorResponse(projectDetails);
+          }
         }
+      } catch (apiError) {
+        clearTimeout(timeoutId);
+        throw apiError;
+      }
+    } catch (error) {
+      console.error(`Claude attempt ${attempts + 1} failed with error:`, error);
+      lastError = error;
+
+      if (attempts === maxRetries - 1) {
+        return getDefaultErrorResponse(projectDetails);
+      }
     }
 
-    throw lastError || new Error('Failed to process plan after all retry attempts');
+    attempts++;
+    if (attempts < maxRetries) {
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+    }
+  }
+
+  throw lastError || new Error('Failed to process plan after all retry attempts');
 }
 
 function getDefaultErrorResponse(projectDetails) {
-    return {
-        summary: "Our system was able to process your plan but couldn't perform a detailed review at this time.",
-        missingPlans: [],
-        missingPermits: [],
-        missingDocumentation: [],
-        missingInspectionCertificates: [],
-        criticalFindings: [],
-        majorFindings: [],
-        minorFindings: [],
-        totalFindings: 0,
-        isCompliant: false,
-        cityPlannerEmailBody: `<div style="color: #0066cc; font-size: 24px; font-weight: bold;">Plan Review Process Completed</div>
+  return {
+    summary: "Our system was able to process your plan but couldn't perform a detailed review at this time.",
+    missingPlans: [],
+    missingPermits: [],
+    missingDocumentation: [],
+    missingInspectionCertificates: [],
+    criticalFindings: [],
+    majorFindings: [],
+    minorFindings: [],
+    totalFindings: 0,
+    isCompliant: false,
+    cityPlannerEmailBody: `<div style="color: #0066cc; font-size: 24px; font-weight: bold;">Plan Review Process Completed</div>
           <hr>
           <h3>Application Cover Page</h3>
           <p><strong>Project Address:</strong> ${projectDetails.address}</p>
@@ -544,7 +544,7 @@ function getDefaultErrorResponse(projectDetails) {
           <div style="font-size: 12px; color: #666; margin-top: 20px;">
             This email was automatically generated by CivicStream. This plan requires manual review by city planning staff.
           </div>`,
-        submitterEmailBody: `<div style="color: #cc0000; font-size: 24px; font-weight: bold;">Plan Review Complete - Manual Review Required</div>
+    submitterEmailBody: `<div style="color: #cc0000; font-size: 24px; font-weight: bold;">Plan Review Complete - Manual Review Required</div>
           <hr>
           <h3>Application Cover Page</h3>
           <p><strong>Project Address:</strong> ${projectDetails.address}</p>
@@ -571,25 +571,25 @@ function getDefaultErrorResponse(projectDetails) {
           <div style="font-size: 12px; color: #666; margin-top: 20px;">
             This email was automatically generated by CivicStream. Your plan requires manual review by city planning staff.
           </div>`
-    };
+  };
 }
 
 async function sendEmail(toEmail, subject, htmlBody) {
-    console.log(`Sending email to: ${toEmail}`);
-    
-    const mailOptions = {
-        from: process.env.EMAIL_FROM,
-        to: toEmail,
-        subject: subject,
-        html: htmlBody,
-    };
+  console.log(`Sending email to: ${toEmail}`);
 
-    try {
-        const result = await transporter.sendMail(mailOptions);
-        console.log(`Email sent successfully to ${toEmail}:`, result.messageId);
-        return result;
-    } catch (error) {
-        console.error(`Failed to send email to ${toEmail}:`, error);
-        throw error;
-    }
+  const mailOptions = {
+    from: process.env.EMAIL_FROM,
+    to: toEmail,
+    subject: subject,
+    html: htmlBody,
+  };
+
+  try {
+    const result = await transporter.sendMail(mailOptions);
+    console.log(`Email sent successfully to ${toEmail}:`, result.messageId);
+    return result;
+  } catch (error) {
+    console.error(`Failed to send email to ${toEmail}:`, error);
+    throw error;
+  }
 }
